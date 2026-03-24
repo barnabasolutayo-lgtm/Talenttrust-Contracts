@@ -312,15 +312,15 @@ impl Escrow {
         let is_authorized = match contract.release_auth {
             ReleaseAuthorization::ClientOnly => caller == contract.client,
             ReleaseAuthorization::ArbiterOnly => {
-                contract.arbiter.clone().map_or(false, |a| caller == a)
+                contract.arbiter.clone().is_some_and(|a| caller == a)
             }
             ReleaseAuthorization::ClientAndArbiter => {
-                caller == contract.client || contract.arbiter.clone().map_or(false, |a| caller == a)
+                caller == contract.client || contract.arbiter.clone().is_some_and(|a| caller == a)
             }
             ReleaseAuthorization::MultiSig => {
                 // For multi-sig, both client and arbiter must approve
                 // This function handles individual approval
-                caller == contract.client || contract.arbiter.clone().map_or(false, |a| caller == a)
+                caller == contract.client || contract.arbiter.clone().is_some_and(|a| caller == a)
             }
         };
 
@@ -332,7 +332,7 @@ impl Escrow {
         if milestone
             .approved_by
             .clone()
-            .map_or(false, |addr| addr == caller)
+            .is_some_and(|addr| addr == caller)
         {
             panic!("Milestone already approved by this address");
         }
@@ -402,22 +402,20 @@ impl Escrow {
             ReleaseAuthorization::ClientOnly => milestone
                 .approved_by
                 .clone()
-                .map_or(false, |addr| addr == contract.client),
-            ReleaseAuthorization::ArbiterOnly => {
-                contract.arbiter.clone().map_or(false, |arbiter| {
-                    milestone
-                        .approved_by
-                        .clone()
-                        .map_or(false, |addr| addr == arbiter)
-                })
-            }
+                .is_some_and(|addr| addr == contract.client),
+            ReleaseAuthorization::ArbiterOnly => contract.arbiter.clone().is_some_and(|arbiter| {
+                milestone
+                    .approved_by
+                    .clone()
+                    .is_some_and(|addr| addr == arbiter)
+            }),
             ReleaseAuthorization::ClientAndArbiter => {
-                milestone.approved_by.clone().map_or(false, |addr| {
+                milestone.approved_by.clone().is_some_and(|addr| {
                     addr == contract.client
                         || contract
                             .arbiter
                             .clone()
-                            .map_or(false, |arbiter| addr == arbiter)
+                            .is_some_and(|arbiter| addr == arbiter)
                 })
             }
             ReleaseAuthorization::MultiSig => {
@@ -426,7 +424,7 @@ impl Escrow {
                 milestone
                     .approved_by
                     .clone()
-                    .map_or(false, |addr| addr == contract.client)
+                    .is_some_and(|addr| addr == contract.client)
             }
         };
 
@@ -521,7 +519,7 @@ impl Escrow {
         );
 
         // Constraint 5: rating must be in [1, 5].
-        assert!(rating >= 1 && rating <= 5, "rating must be between 1 and 5");
+        assert!((1..=5).contains(&rating), "rating must be between 1 and 5");
 
         // Set the issued flag before emitting the event (checks-effects-interactions).
         env.storage()
@@ -589,11 +587,7 @@ impl Escrow {
     /// - In Funded state: client tries to cancel when milestones have been released.
     /// - In Disputed state: only arbiter can approve (non-arbiter callers cannot cancel).
     /// - Created state: caller is neither client nor freelancer.
-    pub fn cancel_contract(
-        env: Env,
-        contract_id: u32,
-        caller: Address,
-    ) -> bool {
+    pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
         caller.require_auth();
 
         // Retrieve contract
