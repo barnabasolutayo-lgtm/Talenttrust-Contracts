@@ -511,3 +511,14 @@ fn test_edge_cases() {
     );
     assert_eq!(id2, 0); // ledger sequence stays the same in test env
 }
+
+#[test]
+fn test_issue_reputation() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let freelancer_addr = Address::generate(&env);
+    let result = client.issue_reputation(&freelancer_addr, &5);
+    assert!(result);
+}

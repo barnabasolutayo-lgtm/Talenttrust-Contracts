@@ -4,7 +4,9 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 
 ## What's in this repo
 
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance. 
+  - [Architecture Overview](docs/escrow/architecture.md)
+  - [Security Assumptions & Threat Model](docs/escrow/security.md)
 
 ## Prerequisites
 

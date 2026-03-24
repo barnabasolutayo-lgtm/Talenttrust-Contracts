@@ -1,48 +1,84 @@
 #![no_std]
 
+/// # TalentTrust Escrow Protocol
+///
+/// This module implements a decentralized freelancer escrow protocol on the Stellar network using Soroban.
+/// It holds funds securely, supports milestone-based payments, customizable authorization schemes,
+/// and reputation credential issuance.
+///
+/// ## Security Assumptions & Threat Model
+/// - **Authorization**: Only authorized actors (defined by [`ReleaseAuthorization`]) can approve or release milestones.
+/// - **Timestamps**: The underlying ledger timestamp cannot be manipulated to cause early release (timestamps reflect actual ledger close times).
+/// - **Trust Assumptions**: For schemes like `ArbiterOnly` or `ClientAndArbiter`, the Arbiter is assumed to act impartially.
+/// - **Overflows**: The total milestone amount is bounded by `i128::MAX`. Contract relies on standard panic on overflow if any math were added.
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
 };
 
+/// Represents the current lifecycle state of an Escrow contract.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
+    /// Contract is initialized but not yet funded by the Client.
     Created = 0,
+    /// Contract is fully funded. Milestones can now be approved and released.
     Funded = 1,
+    /// All milestones have been released. The contract is concluded.
     Completed = 2,
+    /// The contract is in an active dispute state.
     Disputed = 3,
 }
 
+/// A specific payment tranche in the escrow, unlocking a designated amount.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Milestone {
+    /// The amount of the underlying asset locked for this milestone.
     pub amount: i128,
+    /// Whether the funds for this milestone have been successfully released to the freelancer.
     pub released: bool,
+    /// The address of the party who approved the milestone release, if any.
     pub approved_by: Option<Address>,
+    /// The ledger timestamp when the approval was granted.
     pub approval_timestamp: Option<u64>,
 }
 
+/// Defines the security authorization scheme required to approve and release milestones.
+/// Carefully review the threat model associated with each scheme.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseAuthorization {
+    /// Only the client can approve and release funds. Trust lies heavily in the client.
     ClientOnly = 0,
+    /// Either the client or the arbiter can approve and release funds. Flexible but gives arbiter full power.
     ClientAndArbiter = 1,
+    /// Only the arbiter can approve and release funds. Client trusts arbiter completely.
     ArbiterOnly = 2,
+    /// Both the client and the arbiter must approve before funds can be released. Highest security.
     MultiSig = 3,
 }
 
+/// The main state structure describing an instantiation of the Escrow protocol.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct EscrowContract {
+    /// The party depositing funds and receiving work.
     pub client: Address,
+    /// The party performing work and receiving funds.
     pub freelancer: Address,
+    /// An impartial third-party designated to resolve disputes (optional).
     pub arbiter: Option<Address>,
+    /// The individual payment milestones of this contract.
     pub milestones: Vec<Milestone>,
+    /// The current lifecycle status of the contract.
     pub status: ContractStatus,
+    /// The authorization scheme dictating who can release funds.
     pub release_auth: ReleaseAuthorization,
+    /// The ledger timestamp when the contract was created.
     pub created_at: u64,
 }
 
+/// Represents the aggregate approval status for multi-sig scenarios.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Approval {
@@ -52,6 +88,7 @@ pub enum Approval {
     Both = 3,
 }
 
+/// Tracker for multi-signature approval on a specific milestone.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct MilestoneApproval {
@@ -61,22 +98,31 @@ pub struct MilestoneApproval {
     pub approval_status: Approval,
 }
 
+/// The Escrow contract implementation.
 #[contract]
 pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
-    /// Create a new escrow contract with milestone release authorization
+    /// Create a new escrow contract with milestone release authorization.
+    ///
+    /// This function initializes the escrow state and sets up payment tranches.
     ///
     /// # Arguments
     /// * `client` - Address of the client who funds the escrow
     /// * `freelancer` - Address of the freelancer who receives payments
     /// * `arbiter` - Optional arbiter address for dispute resolution
     /// * `milestone_amounts` - Vector of milestone payment amounts
-    /// * `release_auth` - Authorization scheme for milestone releases
+    /// * `release_auth` - Security authorization scheme for milestone releases
     ///
     /// # Returns
     /// Contract ID for the newly created escrow
+    ///
+    /// # Security & Threat Scenarios
+    /// - **Sybil/Self-Dealing**: `client` and `freelancer` cannot be the same address.
+    /// - **Integer Underflow/Griefing**: Disallows zero or negative milestone amounts.
+    /// - **Phishing**: The caller pays for setup but funds are not extracted automatically.
+    ///   A separate `deposit_funds` call is required to actually lock value.
     ///
     /// # Errors
     /// Panics if:
@@ -143,9 +189,16 @@ impl Escrow {
 
     /// Deposit funds into escrow. Only the client may call this.
     ///
+    /// Moves the contract status from `Created` to `Funded`.
+    ///
     /// # Arguments
     /// * `contract_id` - ID of the escrow contract
-    /// * `amount` - Amount to deposit (must equal total milestone amounts)
+    /// * `amount` - Amount to deposit (must exactly equal the sum of all milestone amounts)
+    ///
+    /// # Security & Threat Scenarios
+    /// - **Access Control**: Validates that only the `client` address invokes this function (`caller.require_auth()`).
+    /// - **Replay/State-Machine Attack**: Verifies `ContractStatus::Created` to prevent double-funding or funding after completion.
+    /// - **Undercollateralization**: Enforces that the deposited `amount` matches the sum of the milestones exactly.
     ///
     /// # Returns
     /// true if deposit successful
@@ -196,20 +249,26 @@ impl Escrow {
         true
     }
 
-    /// Approve a milestone for release with proper authorization
+    /// Approve a milestone for release with proper authorization.
     ///
     /// # Arguments
     /// * `contract_id` - ID of the escrow contract
     /// * `milestone_id` - ID of the milestone to approve
+    ///
+    /// # Security & Threat Scenarios
+    /// - **Unauthorized Approval**: Enforces authorization matching the `ReleaseAuthorization` scheme.
+    /// - **Double Approval**: Prevents the same party from approving multiple times (`approved_by` validation).
+    /// - **Out-of-Order Execution**: Verifies `ContractStatus::Funded` to prevent approvals on unfunded or disputed contracts.
+    /// - **Invalid Access**: Bounds checking on `milestone_id`.
     ///
     /// # Returns
     /// true if approval successful
     ///
     /// # Errors
     /// Panics if:
-    /// - Caller is not authorized to approve
+    /// - Caller is not authorized to approve based on the selected authorization scheme
     /// - Contract is not in Funded status
-    /// - Milestone ID is invalid
+    /// - Milestone ID is invalid or out-of-bounds
     /// - Milestone already released
     /// - Milestone already approved by this caller
     pub fn approve_milestone_release(
@@ -287,11 +346,18 @@ impl Escrow {
         true
     }
 
-    /// Release a milestone payment to the freelancer after proper authorization
+    /// Release a milestone payment to the freelancer after proper authorization.
+    ///
+    /// Automatically upgrades the contract status to `Completed` if this is the final milestone.
     ///
     /// # Arguments
     /// * `contract_id` - ID of the escrow contract
     /// * `milestone_id` - ID of the milestone to release
+    ///
+    /// # Security & Threat Scenarios
+    /// - **Double Release Attack**: Prevents releasing a milestone that is already marked `released`.
+    /// - **Premature Release**: Strictly verifies that sufficient approvals have been met according to `ReleaseAuthorization` scheme.
+    /// - **Unauthorized Execution**: Requires caller authentication (`caller.require_auth()`).
     ///
     /// # Returns
     /// true if release successful
@@ -394,6 +460,10 @@ impl Escrow {
     }
 
     /// Issue a reputation credential for the freelancer after contract completion.
+    ///
+    /// # Security & Threat Scenarios
+    /// - This function is currently a placeholder. In a complete implementation,
+    ///   reputation shouldn't be issued multiple times or without valid contract completion.
     pub fn issue_reputation(_env: Env, _freelancer: Address, _rating: i128) -> bool {
         // Reputation credential issuance.
         true
@@ -407,3 +477,5 @@ impl Escrow {
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_security;
