@@ -89,11 +89,7 @@ impl Escrow {
     /// Boundary behavior:
     /// - `timestamp <= deadline_at` is considered valid (not expired)
     /// - `timestamp > deadline_at` is considered expired
-    fn ensure_milestone_not_expired(
-        env: &Env,
-        contract: &mut EscrowContract,
-        milestone_id: u32,
-    ) {
+    fn ensure_milestone_not_expired(env: &Env, contract: &mut EscrowContract, milestone_id: u32) {
         if Self::is_milestone_expired(env, contract, milestone_id) {
             contract.status = ContractStatus::Disputed;
             Self::save_contract(env, contract);
