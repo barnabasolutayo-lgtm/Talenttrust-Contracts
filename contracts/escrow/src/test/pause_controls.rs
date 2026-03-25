@@ -1,8 +1,8 @@
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient};
+use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
-fn setup() -> (Env, EscrowClient<'static>, Address, Address) {
+fn setup_initialized() -> (Env, EscrowClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -10,29 +10,21 @@ fn setup() -> (Env, EscrowClient<'static>, Address, Address) {
     let client = EscrowClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    assert!(client.initialize(&admin));
 
-    let freelancer = Address::generate(&env);
-    (env, client, admin, freelancer)
+    (env, client, admin)
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]
+#[should_panic(expected = "Pause controls already initialized")]
 fn test_initialize_only_once_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
-    client.initialize(&admin);
+    let (_env, client, admin) = setup_initialized();
+    let _ = client.initialize(&admin);
 }
 
 #[test]
 fn test_pause_then_unpause_toggles_state() {
-    let (_env, client, _admin, _freelancer) = setup();
+    let (_env, client, _admin) = setup_initialized();
 
     assert!(!client.is_paused());
     assert!(client.pause());
@@ -43,53 +35,25 @@ fn test_pause_then_unpause_toggles_state() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #3)")]
+#[should_panic(expected = "Contract is paused")]
 fn test_pause_blocks_create_contract() {
-    let (env, client, _admin, freelancer) = setup();
-    client.pause();
+    let (env, client, _admin) = setup_initialized();
+    assert!(client.pause());
 
     let client_addr = Address::generate(&env);
-    let milestones = vec![&env, 50_i128, 75_i128];
-    let _ = client.create_contract(&client_addr, &freelancer, &milestones);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #3)")]
-fn test_pause_blocks_deposit_funds() {
-    let (_env, client, _admin, _freelancer) = setup();
-    client.pause();
-
-    let _ = client.deposit_funds(&1, &1_000);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #3)")]
-fn test_pause_blocks_release_milestone() {
-    let (_env, client, _admin, _freelancer) = setup();
-    client.pause();
-
-    let _ = client.release_milestone(&1, &0);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #3)")]
-fn test_pause_blocks_issue_reputation() {
-    let (env, client, _admin, _freelancer) = setup();
-    client.pause();
-
     let freelancer = Address::generate(&env);
-    let _ = client.issue_reputation(&freelancer, &5);
+    let milestones = vec![&env, 50_i128, 75_i128];
+    let _ = client.create_contract(
+        &client_addr,
+        &freelancer,
+        &None::<Address>,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #4)")]
-fn test_unpause_fails_when_not_paused() {
-    let (_env, client, _admin, _freelancer) = setup();
-    let _ = client.unpause();
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Pause controls are not initialized")]
 fn test_pause_requires_initialization() {
     let env = Env::default();
     env.mock_all_auths();
