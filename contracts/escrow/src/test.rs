@@ -2,8 +2,8 @@
 
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
-    vec, Address, Env, IntoVal,
+    testutils::Address as _,
+    vec, Address, Env,
 };
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
@@ -28,7 +28,6 @@ fn test_create_contract_success() {
     let client = EscrowClient::new(&env, &contract_id);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let token = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
     let id = client.create_contract(
@@ -122,16 +121,18 @@ fn test_create_contract_negative_amount() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #8)")]
+#[should_panic(expected = "Deposit amount must equal total milestone amounts")]
 fn test_create_contract_invalid_milestone_amount() {
-    let (env, _contract_id, client, _admin, _treasury) = setup_with_treasury();
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_0000000_i128];
 
     // Create contract first
-    client.create_contract(
+    let id = client.create_contract(
         &client_addr,
         &freelancer_addr,
         &None::<Address>,
@@ -143,7 +144,7 @@ fn test_create_contract_invalid_milestone_amount() {
     // For now, we test the basic contract creation logic
 
     env.mock_all_auths();
-    let result = client.deposit_funds(&1, &client_addr, &1000_0000000);
+    let result = client.deposit_funds(&id, &client_addr, &500_0000000);
     assert!(result);
 }
 
