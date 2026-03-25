@@ -15,7 +15,6 @@ const DEFAULT_MAX_REPUTATION_RATING: i128 = 5;
 /// - Only `Created -> Funded -> Completed` transitions are currently supported.
 /// - `Disputed` is reserved for future dispute resolution flows and is not reachable
 ///   in the current implementation.
-
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
