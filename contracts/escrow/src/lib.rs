@@ -16,6 +16,40 @@ const DEFAULT_MAX_REPUTATION_RATING: i128 = 5;
 /// - `Disputed` is reserved for future dispute resolution flows and is not reachable
 ///   in the current implementation.
 
+/// Maximum fee basis points (100% = 10000 basis points)
+pub const MAX_FEE_BASIS_POINTS: u32 = 10000;
+
+/// Default protocol fee: 2.5% = 250 basis points
+pub const DEFAULT_FEE_BASIS_POINTS: u32 = 250;
+
+/// Default timeout duration: 30 days in seconds (30 * 24 * 60 * 60)
+pub const DEFAULT_TIMEOUT_SECONDS: u64 = 2_592_000;
+
+/// Minimum timeout duration: 1 day in seconds
+pub const MIN_TIMEOUT_SECONDS: u64 = 86_400;
+
+/// Maximum timeout duration: 365 days in seconds
+pub const MAX_TIMEOUT_SECONDS: u64 = 31_536_000;
+
+/// Data keys for contract storage
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    Admin,
+    TreasuryConfig,
+    Contract(u32),
+    Milestone(u32, u32),
+    ContractStatus(u32),
+    NextContractId,
+    ContractTimeout(u32),
+    MilestoneDeadline(u32, u32),
+    DisputeDeadline(u32),
+    LastActivity(u32),
+    Dispute(u32),
+    MilestoneComplete(u32, u32),
+}
+
+/// Status of an escrow contract
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
@@ -23,6 +57,7 @@ pub enum ContractStatus {
     Funded = 1,
     Completed = 2,
     Disputed = 3,
+    InDispute = 4,
 }
 
 /// Individual milestone tracked inside an escrow agreement.
@@ -127,6 +162,92 @@ enum DataKey {
     GovernanceAdmin,
     PendingGovernanceAdmin,
     ProtocolParameters,
+}
+
+/// Timeout configuration for escrow contracts
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimeoutConfig {
+    /// Timeout duration in seconds
+    pub duration: u64,
+    /// Auto-resolve type: 0 = return to client, 1 = release to freelancer, 2 = split
+    pub auto_resolve_type: u32,
+}
+
+/// Dispute structure for tracking disputes
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Dispute {
+    /// Address that initiated the dispute
+    pub initiator: Address,
+    /// Reason for the dispute
+    pub reason: Symbol,
+    /// Timestamp when dispute was created
+    pub created_at: u64,
+    /// Whether dispute has been resolved
+    pub resolved: bool,
+}
+
+/// Treasury configuration for protocol fee collection
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryConfig {
+    /// Address where protocol fees are sent
+    pub address: Address,
+    /// Fee percentage in basis points (10000 = 100%)
+    pub fee_basis_points: u32,
+}
+
+/// Escrow contract structure
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowContract {
+    pub client: Address,
+    pub freelancer: Address,
+    pub total_amount: i128,
+    pub milestone_count: u32,
+}
+
+/// Custom errors for the escrow contract
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EscrowError {
+    /// Treasury not initialized
+    TreasuryNotInitialized = 1,
+    /// Invalid fee percentage (exceeds 100%)
+    InvalidFeePercentage = 2,
+    /// Unauthorized access
+    Unauthorized = 3,
+    /// Contract not found
+    ContractNotFound = 4,
+    /// Milestone not found
+    MilestoneNotFound = 5,
+    /// Milestone already released
+    MilestoneAlreadyReleased = 6,
+    /// Insufficient funds
+    InsufficientFunds = 7,
+    /// Invalid amount
+    InvalidAmount = 8,
+    /// Treasury already initialized
+    TreasuryAlreadyInitialized = 9,
+    /// Arithmetic overflow
+    ArithmeticOverflow = 10,
+    /// Timeout not exceeded
+    TimeoutNotExceeded = 11,
+    /// Invalid timeout duration
+    InvalidTimeout = 12,
+    /// Milestone not marked complete
+    MilestoneNotComplete = 13,
+    /// Milestone already complete
+    MilestoneAlreadyComplete = 14,
+    /// Dispute not found
+    DisputeNotFound = 15,
+    /// Dispute already resolved
+    DisputeAlreadyResolved = 16,
+    /// Timeout already claimed
+    TimeoutAlreadyClaimed = 17,
+    /// No dispute active
+    NoDisputeActive = 18,
 }
 
 #[contract]
@@ -504,6 +625,14 @@ impl Escrow {
         Self::ensure_not_paused(&env);
 
         true
+    }
+
+    /// Get the admin address.
+    pub fn get_admin(env: Env) -> Result<Address, EscrowError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::Unauthorized)
     }
 
     /// Hello-world style function for testing and CI.
