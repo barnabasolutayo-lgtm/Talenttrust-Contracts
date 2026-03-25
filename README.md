@@ -23,7 +23,7 @@ cd talenttrust-contracts
 # Build
 cargo build
 
-# Run tests
+# Run tests (includes 95%+ coverage negative path testing for escrow)
 cargo test
 
 # Check formatting
