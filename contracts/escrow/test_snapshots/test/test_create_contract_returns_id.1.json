@@ -22,7 +22,14 @@
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": {
-              "symbol": "contract"
+              "vec": [
+                {
+                  "symbol": "Contract"
+                },
+                {
+                  "u32": 1
+                }
+              ]
             },
             "durability": "persistent"
           }
@@ -35,31 +42,24 @@
                 "ext": "v0",
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
                 "key": {
-                  "symbol": "contract"
+                  "vec": [
+                    {
+                      "symbol": "Contract"
+                    },
+                    {
+                      "u32": 1
+                    }
+                  ]
                 },
                 "durability": "persistent",
                 "val": {
                   "map": [
                     {
                       "key": {
-                        "symbol": "arbiter"
-                      },
-                      "val": "void"
-                    },
-                    {
-                      "key": {
                         "symbol": "client"
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "created_at"
-                      },
-                      "val": {
-                        "u64": 0
                       }
                     },
                     {
@@ -91,18 +91,6 @@
                               },
                               {
                                 "key": {
-                                  "symbol": "approval_timestamp"
-                                },
-                                "val": "void"
-                              },
-                              {
-                                "key": {
-                                  "symbol": "approved_by"
-                                },
-                                "val": "void"
-                              },
-                              {
-                                "key": {
                                   "symbol": "released"
                                 },
                                 "val": {
@@ -123,18 +111,6 @@
                                     "lo": 4000000000
                                   }
                                 }
-                              },
-                              {
-                                "key": {
-                                  "symbol": "approval_timestamp"
-                                },
-                                "val": "void"
-                              },
-                              {
-                                "key": {
-                                  "symbol": "approved_by"
-                                },
-                                "val": "void"
                               },
                               {
                                 "key": {
@@ -161,18 +137,6 @@
                               },
                               {
                                 "key": {
-                                  "symbol": "approval_timestamp"
-                                },
-                                "val": "void"
-                              },
-                              {
-                                "key": {
-                                  "symbol": "approved_by"
-                                },
-                                "val": "void"
-                              },
-                              {
-                                "key": {
                                   "symbol": "released"
                                 },
                                 "val": {
@@ -186,14 +150,6 @@
                     },
                     {
                       "key": {
-                        "symbol": "release_auth"
-                      },
-                      "val": {
-                        "u32": 0
-                      }
-                    },
-                    {
-                      "key": {
                         "symbol": "status"
                       },
                       "val": {
@@ -201,6 +157,45 @@
                       }
                     }
                   ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "NextId"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "NextId"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 1
                 }
               }
             },
