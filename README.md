@@ -7,39 +7,7 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
 - **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
-- **Escrow docs** (`docs/escrow`): Upgradeable storage layout strategy, migration safety notes, and security assumptions.
-
-### Release Readiness Checklist
-
-The escrow contract includes an on-chain **release readiness checklist** that automatically tracks and enforces deployment, verification, and post-deploy monitoring gates:
-
-| Phase | Items |
-|---|---|
-| Deployment | Contract created, funds deposited |
-| Verification | Parties authenticated, milestones defined |
-| Post-Deploy Monitoring | All milestones released, reputation issued |
-
-`release_milestone` is **hard-blocked** until all Deployment and Verification items are satisfied.  
-Query checklist state with `get_release_checklist`, `is_release_ready`, and `is_post_deploy_complete`.
-
-See [docs/escrow/release-readiness-checklist.md](docs/escrow/release-readiness-checklist.md) for full details, function reference, error codes, and security model.
-
-### Input Sanitization Hardening
-
-The escrow contract rejects malformed contract-creation inputs before any state is written:
-
-- `client` and `freelancer` must be different addresses.
-- Every milestone amount must be strictly positive (`> 0`).
-- Milestone count must be between `1` and `MAX_MILESTONES` (`20`).
-
-## Escrow timeout behavior
-
-- Each milestone has a deterministic `deadline_at` timestamp set at contract creation.
-- Deadline boundary is inclusive:
-  - valid while `ledger_timestamp <= deadline_at`
-  - expired when `ledger_timestamp > deadline_at`
-- Any approval or release attempt after expiry transitions the contract from `Funded` to `Disputed` and rejects the action.
-- See `docs/escrow/timeout-behavior.md` for threat model and testing notes.
+  - Full developer reference: [`docs/escrow/README.md`](docs/escrow/README.md)
 
 ## Prerequisites
 
