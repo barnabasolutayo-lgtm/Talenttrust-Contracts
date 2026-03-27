@@ -40,7 +40,34 @@ pub enum ContractStatus {
     Disputed = 3,
 }
 
+<<<<<<< feature/contracts-12-contract-status-transition-guardrails
+impl ContractStatus {
+    /// Returns whether a transition from `self` to `next` is allowed.
+    pub fn can_transition_to(self, next: ContractStatus) -> bool {
+        if self == next {
+            return true;
+        }
+
+        match (self, next) {
+            (ContractStatus::Created, ContractStatus::Funded) => true,
+            (ContractStatus::Funded, ContractStatus::Completed) => true,
+            (ContractStatus::Funded, ContractStatus::Disputed) => true,
+            (ContractStatus::Disputed, ContractStatus::Completed) => true,
+            _ => false,
+        }
+    }
+
+    /// Enforces valid status transitions and panics on invalid ones.
+    pub fn assert_can_transition_to(self, next: ContractStatus) {
+        if !self.can_transition_to(next) {
+            panic!("Invalid contract status transition");
+        }
+    }
+}
+
+=======
 /// Represents a payment milestone in the escrow contract.
+>>>>>>> main
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Milestone {
@@ -137,6 +164,14 @@ pub struct StorageLayoutPlan {
 #[repr(u32)]
 enum StorageVersion {
     V1 = 1,
+}
+
+impl EscrowContract {
+    /// Transition contract status with guardrails.
+    fn transition_status(&mut self, next: ContractStatus) {
+        self.status.assert_can_transition_to(next);
+        self.status = next;
+    }
 }
 
 #[contracttype]
@@ -382,10 +417,19 @@ impl Escrow {
             return Err(EscrowError::FundingExceedsRequired);
         }
 
+<<<<<<< feature/contracts-12-contract-status-transition-guardrails
+        // Update contract status to Funded
+        let mut updated_contract = contract;
+        updated_contract.transition_status(ContractStatus::Funded);
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("contract"), &updated_contract);
+=======
         record.funded_amount = updated_funded;
         if record.funded_amount > 0 {
             record.status = ContractStatus::Funded;
         }
+>>>>>>> main
 
         save_contract(&env, contract_id, &record);
         Ok(true)
@@ -642,6 +686,13 @@ mod tests {
         Escrow::check_funding_invariants(funding);
     }
 
+<<<<<<< feature/contracts-12-contract-status-transition-guardrails
+        // Check if all milestones are released
+        let all_released = contract.milestones.iter().all(|m| m.released);
+        if all_released {
+            contract.transition_status(ContractStatus::Completed);
+        }
+=======
     #[test]
     #[should_panic(expected = "total_released > total_funded")]
     fn test_funding_invariants_over_release() {
@@ -650,6 +701,7 @@ mod tests {
             total_released: 1500,
             total_available: -500,
         };
+>>>>>>> main
 
         Escrow::check_funding_invariants(funding);
     }
@@ -666,6 +718,46 @@ mod tests {
         Escrow::check_funding_invariants(funding);
     }
 
+<<<<<<< feature/contracts-12-contract-status-transition-guardrails
+    /// Mark a contract as disputed, guarded by allowed status transitions.
+    ///
+    /// # Errors
+    /// Panics if:
+    /// - Caller is not the client or arbiter
+    /// - Contract is not in Funded status
+    pub fn dispute_contract(env: Env, _contract_id: u32, caller: Address) -> bool {
+        caller.require_auth();
+
+        let mut contract: EscrowContract = env
+            .storage()
+            .persistent()
+            .get(&symbol_short!("contract"))
+            .unwrap_or_else(|| panic!("Contract not found"));
+
+        if contract.status != ContractStatus::Funded {
+            panic!("Contract must be in Funded status to dispute");
+        }
+
+        let allowed_caller = caller == contract.client
+            || contract.arbiter.clone().map_or(false, |arb| arb == caller);
+
+        if !allowed_caller {
+            panic!("Only client or arbiter can dispute contract");
+        }
+
+        contract.transition_status(ContractStatus::Disputed);
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("contract"), &contract);
+
+        true
+    }
+
+    /// Issue a reputation credential for the freelancer after contract completion.
+    pub fn issue_reputation(_env: Env, _freelancer: Address, _rating: i128) -> bool {
+        // Reputation credential issuance.
+        true
+=======
     #[test]
     #[should_panic(expected = "total_released < 0")]
     fn test_funding_invariants_negative_released() {
@@ -676,6 +768,7 @@ mod tests {
         };
 
         Escrow::check_funding_invariants(funding);
+>>>>>>> main
     }
   
     #[test]
