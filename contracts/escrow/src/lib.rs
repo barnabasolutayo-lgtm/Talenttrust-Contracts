@@ -1,84 +1,35 @@
-//! # TalentTrust Escrow Contract
-//!
-//! A Soroban smart contract implementing a milestone-based escrow protocol for
-//! the TalentTrust decentralized freelancer platform on the Stellar network.
-//!
-//! ## Overview
-//!
-//! The escrow contract holds funds on behalf of a client and releases them to a
-//! freelancer as individual milestones are approved. An optional arbiter can be
-//! designated for dispute resolution. Four authorization schemes are supported:
-//! `ClientOnly`, `ArbiterOnly`, `ClientAndArbiter`, and `MultiSig`.
-//!
-//! ## Lifecycle
-//!
-//! ```text
-//! create_contract → deposit_funds → approve_milestone_release → release_milestone
-//!                                                              ↑ (repeat per milestone)
-//! ```
-//!
-//! When every milestone has been released the contract status transitions to
-//! `Completed` automatically.
-//!
-//! ## Security Assumptions
-//!
-//! - All callers that mutate state must pass `require_auth()`.
-//! - The contract stores a single escrow record keyed by `"contract"`. A
-//!   production deployment should key by `contract_id`.
-//! - No native token transfer is performed in this implementation; fund custody
-//!   and transfer must be wired up via the Stellar asset contract.
-
 #![no_std]
+
+//! ## Mainnet readiness
+//!
+//! - [`Escrow::get_mainnet_readiness_info`] returns protocol version, the non-governable per-contract
+//!   total cap, and governed validation fields (same as [`ProtocolParameters`], flattened for Soroban).
+//! - Contract events use topic prefix `tt_esc` with `create`, `deposit`, or `release` for indexer hooks.
+//! - Reviewer checklist and residual risks: `docs/escrow/mainnet-readiness.md`.
+
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
-/// Persistent storage keys used by the Escrow contract.
-///
-/// Each variant corresponds to a distinct piece of contract state:
-/// - [`DataKey::Contract`] stores the full [`EscrowContract`] keyed by its numeric ID.
-/// - [`DataKey::ReputationIssued`] is a boolean flag that prevents double-issuance of
-///   reputation credentials for a given contract.
-/// - [`DataKey::NextId`] is a monotonically increasing counter for assigning contract IDs.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DataKey {
-    /// Full escrow contract state, keyed by the numeric contract ID.
-    Contract(u32),
-    Milestone(u32, u32),
-    ContractStatus(u32),
-    NextContractId,
-    ContractTimeout(u32),
-    MilestoneDeadline(u32, u32),
-    DisputeDeadline(u32),
-    LastActivity(u32),
-    Dispute(u32),
-    MilestoneComplete(u32, u32),
-    Paused,
-    EmergencyPaused,
-    Reputation(Address),
-    PendingReputationCredits(Address),
-    GovernanceAdmin,
-    PendingGovernanceAdmin,
-    ProtocolParameters,
-}
+/// Reported deployment version for operators (`major * 1_000_000 + minor * 1_000 + patch`).
+pub const MAINNET_PROTOCOL_VERSION: u32 = 1_000_000;
 
-/// The lifecycle status of an escrow contract.
+/// Hard ceiling on the sum of milestone amounts per escrow (stroops). Not governed; change only via wasm upgrade.
+pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000;
+
+/// Persistent lifecycle state for an escrow agreement.
 ///
-/// Valid transitions:
-/// ```text
-/// Created -> Funded -> Completed
-/// Funded  -> Disputed
-/// ```
+/// Security notes:
+/// - Only `Created -> Funded -> Completed` transitions are currently supported.
+/// - `Disputed` is reserved for future dispute resolution flows and is not reachable
+///   in the current implementation.
+
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
-    /// Contract created, awaiting client deposit.
     Created = 0,
-    /// Funds deposited by client; work is in progress.
     Funded = 1,
-    /// All milestones released and contract finalised by the client.
     Completed = 2,
-    /// A dispute has been raised; milestone payments are paused.
     Disputed = 3,
     Refunded = 4,
 }
@@ -101,13 +52,14 @@ pub enum EscrowError {
     DuplicateMilestone = 13,
 }
 
-/// Represents a payment milestone in the escrow contract.
+/// Individual milestone tracked inside an escrow agreement.
+///
+/// Invariant:
+/// - `released == true` is irreversible.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
-    /// Payment amount in stroops (1 XLM = 10_000_000 stroops).
     pub amount: i128,
-    /// Whether the client has released this milestone's funds to the freelancer.
     pub released: bool,
     pub refunded: bool,
 }
@@ -132,16 +84,31 @@ enum DataKey {
     ContractCount,
 }
 
-// ---------------------------------------------------------------------------
-// Contract
-// ---------------------------------------------------------------------------
+    /// Updates governed protocol parameters.
+    ///
+    /// Security properties:
+    /// - Only the current governance admin may update parameters.
+    /// - Parameters are atomically replaced after validation.
+    pub fn update_protocol_parameters(
+        env: Env,
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> bool {
+        let admin = Self::governance_admin(&env);
+        admin.require_auth();
 
-/// The TalentTrust escrow contract entry point.
-#[contract]
-pub struct Escrow;
+        let parameters = Self::validated_protocol_parameters(
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        );
 
-/// Default approval/release deadline for each milestone after contract creation.
-const DEFAULT_MILESTONE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolParameters, &parameters);
 
 #[contractimpl]
 impl Escrow {
@@ -440,229 +407,155 @@ impl Escrow {
     }
 }
 
-    #[test]
-    #[should_panic(expected = "total_contract_value < total_funded")]
-    fn test_contract_invariants_over_funded() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let milestones = vec![
-            &env,
-            Milestone {
-                amount: 500,
-                released: false,
-            },
-            Milestone {
-                amount: 500,
-                released: false,
-            },
-        ];
-
-        let state = EscrowState {
-            client,
-            freelancer,
-            status: ContractStatus::Funded,
-            milestones,
-            funding: FundingAccount {
-                total_funded: 2000, // More than total contract value (1000)
-                total_released: 0,
-                total_available: 2000,
-            },
-        };
-
-        Escrow::check_contract_invariants(state);
+    /// Returns the stored contract state.
+    pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
+        Self::load_contract(&env, contract_id)
     }
-    Ok(())
-}
 
-    #[test]
-    fn test_contract_invariants_fully_released() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
+    /// Returns the stored reputation record for a freelancer, if present.
+    pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Reputation(freelancer))
+    }
 
-        let milestones = vec![
-            &env,
-            Milestone {
-                amount: 500,
-                released: true,
-            },
-            Milestone {
-                amount: 500,
-                released: true,
-            },
-        ];
+    /// Returns the number of pending reputation updates that can be claimed.
+    pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingReputationCredits(freelancer))
+            .unwrap_or(0)
+    }
 
-        let state = EscrowState {
-            client,
-            freelancer,
-            status: ContractStatus::Completed,
-            milestones,
-            funding: FundingAccount {
-                total_funded: 1000,
-                total_released: 1000,
-                total_available: 0,
-            },
-        };
+    /// Returns the active protocol parameters.
+    ///
+    /// If governance has not been initialized yet, this returns the safe default
+    /// parameters baked into the contract.
+    pub fn get_protocol_parameters(env: Env) -> ProtocolParameters {
+        Self::protocol_parameters(&env)
+    }
 
-        // Should not panic
-        Escrow::check_contract_invariants(state);
+    /// Returns the current governance admin, if governance has been initialized.
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::GovernanceAdmin)
+    }
+
+    /// Returns the pending governance admin, if an admin transfer is in flight.
+    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
+        Self::pending_governance_admin(&env)
+    }
+
+    /// Aggregates immutable caps, protocol version, and current governed parameters for mainnet readiness review.
+    pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo {
+        let p = Self::protocol_parameters(&env);
+        MainnetReadinessInfo {
+            protocol_version: MAINNET_PROTOCOL_VERSION,
+            max_escrow_total_stroops: MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS,
+            min_milestone_amount: p.min_milestone_amount,
+            max_milestones: p.max_milestones,
+            min_reputation_rating: p.min_reputation_rating,
+            max_reputation_rating: p.max_reputation_rating,
+        }
     }
 }
 
-    // ============================================================================
-    // CONTRACT CREATION TESTS
-    // ============================================================================
-
-    #[test]
-    fn test_create_contract_valid() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-
-        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
-        assert_eq!(id, 1);
+impl Escrow {
+    fn next_contract_id(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1)
     }
 
-    #[test]
-    #[should_panic(expected = "Must have at least one milestone")]
-    fn test_create_contract_no_milestones() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env];
-
-        Escrow::create_contract(env.clone(), client, freelancer, milestones);
-    }
-}
-
-    #[test]
-    #[should_panic(expected = "Milestone amounts must be positive")]
-    fn test_create_contract_zero_milestone() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env, 100_i128, 0_i128, 200_i128];
-
-        Escrow::create_contract(env.clone(), client, freelancer, milestones);
+    fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| panic!("contract not found"))
     }
 
-    #[test]
-    #[should_panic(expected = "Milestone amounts must be positive")]
-    fn test_create_contract_negative_milestone() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env, 100_i128, -50_i128, 200_i128];
-
-        Escrow::create_contract(env.clone(), client, freelancer, milestones);
+    fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContractData) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), contract);
     }
 
-    // ============================================================================
-    // DEPOSIT FUNDS TESTS
-    // ============================================================================
-
-    #[test]
-    fn test_deposit_funds_valid() {
-        let env = Env::default();
-        let result = Escrow::deposit_funds(env.clone(), 1, 1_000_0000000);
-        assert!(result);
+    fn add_pending_reputation_credit(env: &Env, freelancer: &Address) {
+        let key = DataKey::PendingReputationCredits(freelancer.clone());
+        let current = env.storage().persistent().get::<_, u32>(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + 1));
     }
 
-    #[test]
-    #[should_panic(expected = "Deposit amount must be positive")]
-    fn test_deposit_funds_zero_amount() {
-        let env = Env::default();
-        Escrow::deposit_funds(env.clone(), 1, 0);
+    fn governance_admin(env: &Env) -> Address {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GovernanceAdmin)
+            .unwrap_or_else(|| panic!("protocol governance is not initialized"))
     }
 
-    #[test]
-    #[should_panic(expected = "Deposit amount must be positive")]
-    fn test_deposit_funds_negative_amount() {
-        let env = Env::default();
-        Escrow::deposit_funds(env.clone(), 1, -1_000_0000000);
+    fn pending_governance_admin(env: &Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingGovernanceAdmin)
     }
 
-    // ============================================================================
-    // EDGE CASE AND OVERFLOW TESTS
-    // ============================================================================
-
-    #[test]
-    fn test_large_milestone_amounts() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env, i128::MAX / 3, i128::MAX / 3, i128::MAX / 3];
-
-        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
-        assert_eq!(id, 1);
+    fn protocol_parameters(env: &Env) -> ProtocolParameters {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProtocolParameters)
+            .unwrap_or_else(Self::default_protocol_parameters)
     }
 
-    #[test]
-    fn test_single_milestone_contract() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let milestones = vec![&env, 1000_i128];
-
-        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
-        assert_eq!(id, 1);
+    fn default_protocol_parameters() -> ProtocolParameters {
+        ProtocolParameters {
+            min_milestone_amount: DEFAULT_MIN_MILESTONE_AMOUNT,
+            max_milestones: DEFAULT_MAX_MILESTONES,
+            min_reputation_rating: DEFAULT_MIN_REPUTATION_RATING,
+            max_reputation_rating: DEFAULT_MAX_REPUTATION_RATING,
+        }
     }
 
-    #[test]
-    fn test_many_milestones_contract() {
-        let env = Env::default();
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let mut milestones = vec![&env];
-
-        for i in 1..=100 {
-            milestones.push_back(i as i128 * 100);
+    fn validated_protocol_parameters(
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> ProtocolParameters {
+        if min_milestone_amount <= 0 {
+            panic!("minimum milestone amount must be positive");
+        }
+        if max_milestones == 0 {
+            panic!("maximum milestones must be positive");
+        }
+        if min_reputation_rating <= 0 {
+            panic!("minimum reputation rating must be positive");
+        }
+        if min_reputation_rating > max_reputation_rating {
+            panic!("reputation rating range is invalid");
         }
 
-        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
-        assert_eq!(id, 1);
+        ProtocolParameters {
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        }
     }
 
-    #[test]
-    fn test_funding_invariants_boundary_values() {
-        // Test with maximum safe values that satisfy the invariant
-        let total_funded = 1_000_000_000_000_000_000_i128;
-        let total_released = 500_000_000_000_000_000_i128;
-        let total_available = total_funded - total_released;
-
-        let funding = FundingAccount {
-            total_funded,
-            total_released,
-            total_available,
-        };
-
-        Escrow::check_funding_invariants(funding);
-    }
-
-    // ============================================================================
-    // ORIGINAL TESTS (PRESERVED)
-    // ============================================================================
-
-    #[test]
-    fn test_hello() {
-        let env = Env::default();
-        let contract_id = env.register(Escrow, ());
-        let client = EscrowClient::new(&env, &contract_id);
-
-        let result = client.hello(&symbol_short!("World"));
-        assert_eq!(result, symbol_short!("World"));
-    }
-
-    #[test]
-    fn test_release_milestone() {
-        let env = Env::default();
-        let contract_id = env.register(Escrow, ());
-        let client = EscrowClient::new(&env, &contract_id);
-
-        let result = client.release_milestone(&1, &0);
-        assert!(result);
+    fn all_milestones_released(milestones: &Vec<Milestone>) -> bool {
+        let mut index = 0_u32;
+        while index < milestones.len() {
+            let milestone = milestones
+                .get(index)
+                .unwrap_or_else(|| panic!("missing milestone"));
+            if !milestone.released {
+                return false;
+            }
+            index += 1;
+        }
+        true
     }
 }
+
+#[cfg(test)]
+mod test;
