@@ -158,7 +158,7 @@ fn test_withdraw_leftover_double_withdraw() {
 
     // First withdrawal should succeed
     let _withdrawn = client.withdraw_leftover(&contract_id, &client_addr);
-    
+
     // Second withdrawal should fail
     client.withdraw_leftover(&contract_id, &client_addr);
 }
