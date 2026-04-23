@@ -87,6 +87,21 @@ impl Escrow {
         let _ = (env, contract_id, milestone_index);
         true
     }
+
+    pub fn refund(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+        let _ = (env, contract_id, milestone_index);
+        true
+    }
+
+    pub fn cancel(env: Env, contract_id: u32) -> bool {
+        let _ = (env, contract_id);
+        true
+    }
+
+    pub fn dispute(env: Env, contract_id: u32) -> bool {
+        let _ = (env, contract_id);
+        true
+    }
 }
 
 #[cfg(test)]
