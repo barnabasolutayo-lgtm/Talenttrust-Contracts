@@ -38,6 +38,13 @@ pub const MAX_MILESTONES: u32 = 10;
 /// Equals 1 000 000 tokens.
 pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 10^7 = 10^13
 
+pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
+pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
+
+mod types;
+pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
+use crate::types::DataKey as ReadinessDataKey;
+
 #[contract]
 pub struct Escrow;
 
@@ -93,6 +100,21 @@ enum DataKey {
     Contract(u32),
     MilestoneReleased(u32, u32),
     RefundableBalance(u32),
+}
+
+fn update_readiness_checklist<F>(env: &Env, f: F)
+where
+    F: FnOnce(&mut ReadinessChecklist),
+{
+    let mut checklist: ReadinessChecklist = env
+        .storage()
+        .instance()
+        .get(&ReadinessDataKey::ReadinessChecklist)
+        .unwrap_or_default();
+    f(&mut checklist);
+    env.storage()
+        .instance()
+        .set(&ReadinessDataKey::ReadinessChecklist, &checklist);
 }
 
 #[contractimpl]
