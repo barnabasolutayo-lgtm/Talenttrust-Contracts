@@ -6,6 +6,25 @@ use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 use crate::{ContractStatus, Escrow, EscrowClient};
 
+mod performance;
+
+fn register_client(env: &Env) -> EscrowClient {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    (client_addr, freelancer_addr, contract_id)
+}
+
+fn total_milestone_amount() -> i128 {
+    200_0000000 + 400_0000000 + 600_0000000
+}
+
 #[test]
 fn test_hello() {
     let env = Env::default();
