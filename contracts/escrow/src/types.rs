@@ -7,6 +7,10 @@ pub enum DataKey {
     Milestones,
     Initialized,
     MilestoneFunded(u32),
+    Admin,
+    ProtocolFeeBps,
+    AccumulatedProtocolFees,
+    ReadinessChecklist,
 }
 
 #[contracterror]
@@ -49,3 +53,17 @@ pub struct MilestoneFunding {
     pub funded_amount: i128,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Default)]
+pub struct ReadinessChecklist {
+    pub security_audit_completed: bool,
+    pub test_coverage_met: bool,
+    pub documentation_updated: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MainnetReadinessInfo {
+    pub checklist: ReadinessChecklist,
+    pub is_ready: bool,
+}
