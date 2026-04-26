@@ -189,11 +189,15 @@ impl Escrow {
             reputation_issued: false,
         };
 
-        env.storage().persistent().set(&DataKey::Contract(id), &data);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
         env.storage()
             .persistent()
             .set(&DataKey::Milestones(id), &milestones);
-        env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractCount, &(id + 1));
 
         id
     }
@@ -276,7 +280,11 @@ impl Escrow {
         let mut result = Vec::new(&env);
         for (idx, amount) in contract.milestones.iter().enumerate() {
             let milestone_key = DataKey::MilestoneReleased(contract_id, idx as u32);
-            let released = env.storage().persistent().get(&milestone_key).unwrap_or(false);
+            let released = env
+                .storage()
+                .persistent()
+                .get(&milestone_key)
+                .unwrap_or(false);
             result.push_back(Milestone {
                 amount,
                 released,
