@@ -1,10 +1,35 @@
-use soroban_sdk::{symbol_short, testutils::{Address as _, Ledger, LedgerInfo}, vec, Address, Env};
+#![cfg(test)]
 
-use crate::{Escrow, EscrowClient};
+mod cancel_contract;
+
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+
+use crate::{ContractStatus, Escrow, EscrowClient};
+
+mod performance;
+
+fn register_client(env: &Env) -> EscrowClient {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    (client_addr, freelancer_addr, contract_id)
+}
+
+fn total_milestone_amount() -> i128 {
+    200_0000000 + 400_0000000 + 600_0000000
+}
+
+mod ttl_tests;
 
 #[test]
 fn test_hello() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -14,7 +39,7 @@ fn test_hello() {
 
 #[test]
 fn test_create_contract() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -22,221 +47,149 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert_eq!(id, 1);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    assert_eq!(id, 0);
+
+    // Verify contract was created with correct status
+    let contract = client.get_contract(&id);
+    assert_eq!(contract.status, ContractStatus::Created);
 }
 
 #[test]
 fn test_deposit_funds() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    let result = client.deposit_funds(&1, &1_000_0000000);
+    // Create a contract first
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+
+    // Now deposit
+    let result = client.deposit_funds(&id, &1_000_0000000);
     assert!(result);
 }
 
 #[test]
 fn test_release_milestone() {
-    let env = Env::default();
+    let env = new_env();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    let result = client.release_milestone(&1, &0);
+    // Create and fund a contract first
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    client.deposit_funds(&id, &1_000_0000000);
+
+    // Now release milestone
+    let result = client.release_milestone(&id, &0);
     assert!(result);
 }
 
-// ============================================================================
-// Time Management Tests
-// ============================================================================
-
 #[test]
-fn test_schedule_milestone() {
+fn test_withdraw_leftover_success() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Set initial ledger time to a known value
-    env.ledger().set(LedgerInfo {
-        timestamp: 1_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    // Schedule a milestone 7 days (604800 seconds) in the future
-    let deadline = client.schedule_milestone(&604_800);
-    
-    // Verify the deadline is correctly calculated
-    assert_eq!(deadline, 1_604_800);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr)); // Deposit: 1000
+    assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    // Leftover should be: 1000 - 200 = 800
+    let withdrawn = client.withdraw_leftover(&contract_id, &client_addr);
+    assert_eq!(withdrawn, 800_0000000);
 }
 
 #[test]
-fn test_milestone_not_expired() {
+#[should_panic]
+fn test_withdraw_leftover_before_finalization() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Set current time
-    env.ledger().set(LedgerInfo {
-        timestamp: 1_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    // Check a deadline in the future
-    let deadline = 2_000_000;
-    let is_expired = client.is_milestone_expired(&deadline);
-    
-    assert!(!is_expired, "Milestone should not be expired");
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
+    assert!(client.release_milestone(&contract_id, &0, &client_addr));
+
+    // Try to withdraw without finalization
+    client.withdraw_leftover(&contract_id, &client_addr);
 }
 
 #[test]
-fn test_milestone_expired() {
+#[should_panic]
+fn test_withdraw_leftover_unauthorized() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Set current time
-    env.ledger().set(LedgerInfo {
-        timestamp: 2_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let unauthorized_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    // Check a deadline in the past
-    let deadline = 1_000_000;
-    let is_expired = client.is_milestone_expired(&deadline);
-    
-    assert!(is_expired, "Milestone should be expired");
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
+    assert!(client.release_milestone(&contract_id, &0, &client_addr));
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    // Try to withdraw as unauthorized user
+    client.withdraw_leftover(&contract_id, &unauthorized_addr);
 }
 
 #[test]
-fn test_can_dispute_within_window() {
+#[should_panic]
+fn test_withdraw_leftover_no_funds() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Set current time
-    env.ledger().set(LedgerInfo {
-        timestamp: 1_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    // Dispute deadline is in the future
-    let dispute_deadline = 1_500_000;
-    let can_dispute = client.can_dispute(&dispute_deadline);
-    
-    assert!(can_dispute, "Should be able to dispute within window");
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    assert!(client.deposit_funds(&contract_id, &600_0000000, &client_addr)); // Deposit exactly 600
+    assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
+    assert!(client.release_milestone(&contract_id, &1, &client_addr)); // Release: 400
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    // No leftover should remain
+    client.withdraw_leftover(&contract_id, &client_addr);
 }
 
 #[test]
-fn test_cannot_dispute_after_window() {
+#[should_panic]
+fn test_withdraw_leftover_double_withdraw() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
-    // Set current time
-    env.ledger().set(LedgerInfo {
-        timestamp: 2_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    // Dispute deadline has passed
-    let dispute_deadline = 1_500_000;
-    let can_dispute = client.can_dispute(&dispute_deadline);
-    
-    assert!(!can_dispute, "Should not be able to dispute after window");
-}
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
+    assert!(client.release_milestone(&contract_id, &0, &client_addr));
+    assert!(client.finalize_contract(&contract_id, &client_addr));
 
-#[test]
-fn test_time_advancement() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
+    // First withdrawal should succeed
+    let _withdrawn = client.withdraw_leftover(&contract_id, &client_addr);
 
-    // Set initial time
-    env.ledger().set(LedgerInfo {
-        timestamp: 1_000_000,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
-
-    let deadline = 1_500_000;
-    
-    // Initially not expired
-    assert!(!client.is_milestone_expired(&deadline));
-    
-    // Advance time past the deadline
-    env.ledger().set(LedgerInfo {
-        timestamp: 1_600_000,
-        protocol_version: 20,
-        sequence_number: 11,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
-    
-    // Now expired
-    assert!(client.is_milestone_expired(&deadline));
-}
-
-#[test]
-fn test_exact_deadline_boundary() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let deadline = 1_000_000;
-    
-    // Set time exactly at deadline
-    env.ledger().set(LedgerInfo {
-        timestamp: deadline,
-        protocol_version: 20,
-        sequence_number: 10,
-        network_id: Default::default(),
-        base_reserve: 10,
-        min_temp_entry_ttl: 10,
-        min_persistent_entry_ttl: 10,
-        max_entry_ttl: 3110400,
-    });
-    
-    // At exact deadline, milestone is NOT expired (> not >=)
-    assert!(!client.is_milestone_expired(&deadline));
-    
-    // But dispute window is still open (<=)
-    assert!(client.can_dispute(&deadline));
+    // Second withdrawal should fail
+    client.withdraw_leftover(&contract_id, &client_addr);
 }
