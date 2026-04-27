@@ -61,7 +61,7 @@ pub struct EscrowBounds {
 }
 
 #[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum EscrowError {
     InvalidParticipant = 1,
@@ -130,20 +130,30 @@ pub type ContractData = EscrowContractData;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingApproval {
-    pub approver: Address,
-    pub contract_id: u32,
-    pub requested_at_ledger: u32,
-    pub expires_at_ledger: u32,
+pub struct Milestone {
+    pub amount: i128,
+    pub released: bool,
+    pub approved_by: Option<Address>,
+    pub approval_timestamp: Option<u64>,
+    /// Deterministic deadline used for timeout enforcement.
+    pub deadline_at: Option<u64>,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingMigration {
-    pub proposer: Address,
-    pub new_wasm_hash: BytesN<32>,
-    pub requested_at_ledger: u32,
-    pub expires_at_ledger: u32,
+pub struct EscrowContractData {
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub milestones: Vec<Milestone>,
+    pub total_amount: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub released_milestones: u32,
+    pub status: ContractStatus,
+    pub release_auth: ReleaseAuthorization,
+    pub reputation_issued: bool,
+    pub created_at: u64,
 }
 
 #[contracttype]
@@ -169,10 +179,31 @@ pub enum DataKey {
 }
 
 
-#[contractimpl]
 impl Escrow {
-    pub fn hello(_env: Env, to: Symbol) -> Symbol {
-        to
+    fn next_contract_id(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1)
+    }
+
+    fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| panic!("contract not found"))
+    }
+
+    fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContractData) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), contract);
+    }
+
+    fn add_pending_reputation_credit(env: &Env, freelancer: &Address) {
+        let key = DataKey::PendingReputationCredits(freelancer.clone());
+        let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + 1));
     }
 
     pub fn create_contract(
@@ -186,8 +217,11 @@ impl Escrow {
     ) -> u32 {
         client.require_auth();
 
+        if milestone_amounts.is_empty() {
+            panic!("At least one milestone required");
+        }
         if client == freelancer {
-            env.panic_with_error(EscrowError::InvalidParticipant);
+            panic!("Client and freelancer cannot be the same address");
         }
 
         if let Some(ref a) = arbiter {
@@ -238,13 +272,12 @@ impl Escrow {
                 }
             });
 
-        let id: u32 = env
-            .storage()
+        let contract_id = Self::next_contract_id(&env);
+        env.storage()
             .persistent()
-            .get(&DataKey::ContractCount)
-            .unwrap_or(0u32);
+            .set(&DataKey::NextContractId, &(contract_id + 1));
 
-        let data = EscrowContractData {
+        let contract = EscrowContractData {
             client,
             freelancer,
             arbiter,
@@ -254,6 +287,7 @@ impl Escrow {
             released_amount: 0,
             refunded_amount: 0,
         };
+        Self::save_contract(&env, contract_id, &contract);
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
         env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
@@ -500,9 +534,6 @@ impl Escrow {
                     env.panic_with_error(EscrowError::UnauthorizedRole);
                 }
             }
-            _ => {
-                env.panic_with_error(EscrowError::InvalidStatusTransition);
-            }
         }
 
         contract.status = ContractStatus::Cancelled;
@@ -512,7 +543,13 @@ impl Escrow {
             (Symbol::new(&env, "contract_cancelled"), contract_id),
             (caller, contract.status, env.ledger().timestamp()),
         );
+        record.completed_contracts += 1;
+        record.total_rating += rating;
+        record.last_rating = rating;
+        env.storage().persistent().set(&key, &record);
 
+        contract.reputation_issued = true;
+        Self::save_contract(&env, contract_id, &contract);
         true
     }
 
@@ -926,6 +963,3 @@ impl Escrow {
 
 #[cfg(test)]
 mod simple_amount_test;
-
-#[cfg(test)]
-mod test_read_notfound;

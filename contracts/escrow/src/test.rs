@@ -3,9 +3,9 @@
 mod cancel_contract;
 mod summary;
 
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+use crate::{Escrow, EscrowClient};
 
-use crate::{ContractStatus, Escrow, EscrowClient};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError};
 
 fn register_client(env: &Env) -> EscrowClient {
     let id = env.register(Escrow, ());
@@ -66,6 +66,68 @@ fn test_deposit_funds() {
 
     let result = client.deposit_funds(&id, &1_000_0000000);
     assert!(result);
+}
+
+#[test]
+fn test_accept_contract_is_idempotent() {
+    let env = new_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+
+    assert!(client.accept_contract(&id, &freelancer_addr));
+    assert!(client.accept_contract(&id, &freelancer_addr));
+
+    let contract = client.get_contract(&id);
+    assert_eq!(contract.status, ContractStatus::Accepted);
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_requires_acceptance() {
+    let env = new_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+
+    client.deposit_funds(&id, &1_000_0000000);
+}
+
+#[test]
+#[should_panic]
+fn test_accept_after_funded_contract_panics() {
+    let env = new_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+
+    assert!(client.accept_contract(&id, &freelancer_addr));
+    assert!(client.deposit_funds(&id, &1_000_0000000));
+
+    client.accept_contract(&id, &freelancer_addr);
+}
+
+#[test]
+#[should_panic]
+fn test_accept_nonexistent_contract_panics() {
+    let env = new_env();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+    let freelancer_addr = Address::generate(&env);
+
+    client.accept_contract(&999, &freelancer_addr);
 }
 
 #[test]

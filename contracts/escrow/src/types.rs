@@ -1,6 +1,7 @@
 use soroban_sdk::{contracterror, contracttype, Address, Bytes, String, Vec};
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Client,
     Freelancer,
@@ -16,30 +17,54 @@ pub enum DataKey {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum Error {
-    AlreadyInitialized = 1,
-    NotInitialized = 2,
-    IndexOutOfBounds = 3,
-    AlreadyReleased = 4,
-    InvalidStatusTransition = 5,
-    InsufficientMilestoneFunding = 6,
+pub enum EscrowError {
+    InvalidParticipant = 1,
+    EmptyMilestones = 2,
+    InvalidMilestoneAmount = 3,
+    InvalidDepositAmount = 4,
+    InvalidMilestone = 5,
+    UnauthorizedRole = 6,
+    InvalidStatusTransition = 7,
+    AlreadyCancelled = 8,
+    ContractNotFound = 9,
+    MilestonesAlreadyReleased = 10,
+    TooManyMilestones = 11,
+    NotCompleted = 12,
+    InvalidRating = 13,
+    DuplicateRating = 14,
+    AlreadyFinalized = 15,
+    NotReadyForFinalization = 16,
+    AlreadyReleased = 17,
+    InsufficientFunds = 18,
+    SelfRating = 19,
+    CommentTooLong = 20,
+    EmptyComment = 21,
+    AmountMustBePositive = 22,
+    FundingExceedsRequired = 23,
+    InvalidState = 24,
+    InsufficientEscrowBalance = 25,
+    MilestoneNotFound = 26,
+    AlreadyApproved = 27,
+    ReputationAlreadyIssued = 28,
 }
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
     Created = 0,
-    Funded = 1,
-    Completed = 2,
-    Disputed = 3,
-    Cancelled = 4,
-    Refunded = 5,
+    Accepted = 1,
+    Funded = 2,
+    Completed = 3,
+    Disputed = 4,
+    Cancelled = 5,
+    Refunded = 6,
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
     pub amount: i128,
+    pub funded_amount: i128,
     pub released: bool,
     pub refunded: bool,
     pub work_evidence: Option<String>,
@@ -49,11 +74,27 @@ pub struct Milestone {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct MilestoneFunding {
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
+pub struct ReadinessChecklist {
+    pub storage_optimized: bool,
+    pub events_indexed: bool,
+    pub security_audited: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MainnetReadinessInfo {
+    pub protocol_version: u32,
+    pub checklist: ReadinessChecklist,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingApproval {
+    pub approver: Address,
     pub contract_id: u32,
-    pub milestone_idx: u32,
-    pub funded_amount: i128,
+    pub requested_at_ledger: u32,
+    pub expires_at_ledger: u32,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
