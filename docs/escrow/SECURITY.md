@@ -458,9 +458,9 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ## Version
 
-- **Version:** 0.4.0
+- **Version:** 0.3.1
 - **Last Updated:** 2026-04-25
-- **Threat Model:** Complete (updated for reputation issuance gating)
+- **Threat Model:** Complete (updated for identity validation, cancellation, refunds, disputes, and governance)
 - **Risk Assessment:** Mitigations adequate for production use with noted caveats.
 
 ---
@@ -703,6 +703,163 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ---
 
+## Identity Validation Threat Model (v0.3.1)
+
+### Threat 16: Role Overlap and Identity Confusion (Severity: HIGH)
+
+**Attack:** Attacker or colluding parties create a contract where the same address holds multiple roles, enabling unauthorized actions.
+
+**Scenarios:**
+1. Client creates contract with `client == freelancer` (same address).
+   - Client can self-approve milestone releases without freelancer consent.
+   - Client can self-issue reputation without delivering work.
+2. Client creates contract with `arbiter == client`.
+   - Client can unilaterally cancel contract in `Disputed` state.
+   - Client can resolve disputes in their own favor.
+3. Freelancer creates contract with `arbiter == freelancer`.
+   - Freelancer can cancel contract in `Disputed` state.
+   - Freelancer can resolve disputes in their own favor.
+
+**Impact:** Complete bypass of multi-party authorization model. Single actor controls all contract decisions.
+
+**Mitigations:**
+
+1. **Fail-Closed Identity Validation (Constraint 1):**
+   - `validate_participant_identities()` function checks all identity rules before contract creation.
+   - Validation happens **before any storage writes** (fail-closed principle).
+   - Panics with specific error codes if any rule is violated.
+
+2. **Client ≠ Freelancer Rule (Constraint 2):**
+   - Contract panics with `EscrowError::ClientEqualsFreelancer` (error code 17) if `client == freelancer`.
+   - Prevents self-approval of milestone releases and self-collection of funds.
+   - Enforced at contract creation time; cannot be bypassed later.
+
+3. **Arbiter Independence Rule (Constraint 3):**
+   - Contract panics with `EscrowError::ArbiterRoleOverlap` (error code 18) if:
+     - `arbiter == client`, OR
+     - `arbiter == freelancer`
+   - Ensures arbiter is a fully independent third party.
+   - Prevents arbiter from unilaterally cancelling or resolving disputes in their favor.
+
+4. **Optional Arbiter Support (Constraint 4):**
+   - Arbiter can be `None` (no third-party dispute resolution).
+   - If `None`, no arbiter-specific checks are performed.
+   - Allows two-party contracts without requiring a third party.
+
+5. **Atomic Validation (Constraint 5):**
+   - All identity checks are performed in a single atomic operation.
+   - No partial state is possible; either all checks pass or entire transaction reverts.
+   - Prevents race conditions or concurrent validation bypasses.
+
+**Residual Risk:** Very low. Identity validation is cryptographic (address equality) and cannot be spoofed. Assumes Soroban SDK's address comparison is correct.
+
+---
+
+### Threat 17: Arbiter Collusion (Severity: MEDIUM)
+
+**Attack:** Arbiter colludes with one party to unfairly resolve disputes or cancel contracts.
+
+**Mitigations:**
+
+1. **Transparent Audit Trail:**
+   - All arbiter actions (cancellation, dispute resolution) are on-chain and auditable.
+   - Off-chain governance can review arbiter decisions and penalize bias.
+
+2. **Reputation System:**
+   - Arbiters with poor dispute resolution records can be de-listed.
+   - Freelancers and clients can choose arbiters based on reputation.
+
+3. **Multi-Arbiter Support (Future):**
+   - High-value contracts can require multiple arbiters for consensus.
+   - Prevents single arbiter collusion.
+
+**Residual Risk:** **MEDIUM** if arbiter selection is not properly decentralized. Choose arbiters with conflict resolution experience and good reputation.
+
+---
+
+### Threat 18: Identity Spoofing via Contract Reuse (Severity: LOW)
+
+**Attack:** Attacker creates multiple contracts with overlapping identities to confuse off-chain systems.
+
+**Scenarios:**
+1. Attacker creates contract A: `(alice, bob, charlie)`.
+2. Attacker creates contract B: `(alice, bob, diana)`.
+3. Off-chain system confuses the two contracts and attributes reputation incorrectly.
+
+**Mitigations:**
+
+1. **Unique Contract IDs:**
+   - Each contract has a unique `contract_id` assigned at creation.
+   - Off-chain systems must use `(contract_id, event_type)` as the deduplication key.
+
+2. **Event Transparency:**
+   - All events include the full contract ID and participant addresses.
+   - Off-chain systems can verify participant consistency across events.
+
+3. **Audit Trail:**
+   - Complete on-chain history of all contracts and their participants.
+   - Off-chain systems can reconstruct and verify contract lineage.
+
+**Residual Risk:** Very low. Assumes off-chain systems properly deduplicate by contract ID.
+
+---
+
+### Identity Validation Test Coverage
+
+The test suite in `test/input_sanitization_identities.rs` covers:
+
+1. **Client ≠ Freelancer Rule:**
+   - ✓ Rejects `client == freelancer`
+   - ✓ Accepts distinct client and freelancer
+   - ✓ Multiple contracts with different participants
+
+2. **Arbiter Independence Rule:**
+   - ✓ Rejects `arbiter == client`
+   - ✓ Rejects `arbiter == freelancer`
+   - ✓ Accepts distinct arbiter (different from both)
+   - ✓ Rejects partial arbiter overlap
+
+3. **Optional Arbiter:**
+   - ✓ Accepts `None` arbiter
+   - ✓ Accepts `Some(arbiter)` with distinct address
+
+4. **Fail-Closed Validation:**
+   - ✓ Validation happens before storage writes
+   - ✓ No partial state on validation failure
+
+5. **Edge Cases:**
+   - ✓ Three-way distinct addresses
+   - ✓ Multiple distinct contracts
+   - ✓ Non-contiguous participant sets
+
+**Test Count:** 13 comprehensive tests covering all rules and edge cases.
+
+---
+
+### Security Recommendations for Identity Validation
+
+### For Clients
+1. **Verify Freelancer Identity:** Confirm freelancer address off-chain before contract creation.
+2. **Choose Independent Arbiter:** Select an arbiter with no financial interest in the outcome.
+3. **Monitor Contract Creation:** Verify contract was created with correct participants via `get_contract()`.
+
+### For Freelancers
+1. **Verify Client Identity:** Confirm client address off-chain before contract creation.
+2. **Verify Arbiter Independence:** Ensure arbiter is not affiliated with client.
+3. **Monitor Contract State:** Watch for unauthorized contract modifications.
+
+### For Arbiters
+1. **Remain Neutral:** Do not create contracts where you are a participant.
+2. **Disclose Conflicts:** If you have a financial interest, recuse yourself.
+3. **Document Decisions:** Record reasoning for all dispute resolutions.
+
+### For Off-Chain Integration
+1. **Deduplicate by Contract ID:** Use `(contract_id, event_type)` as deduplication key.
+2. **Verify Participants:** Cross-check participant addresses in events against contract creation.
+3. **Audit Trail:** Maintain complete history of all contracts and their participants.
+
+---
+
 ## Coverage Matrix
 
 | Lifecycle Operation | On-Chain Security | Off-Chain Requirement | Test Coverage |
@@ -731,174 +888,95 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ---
 
-## Reputation Threat Model (v0.4.0)
+## Milestone-Level Partial Refund Security (PR #213)
 
 ### Overview
 
-The `issue_reputation` function implements **five layered security constraints** to prevent premature, fraudulent, or duplicate reputation issuance. Each constraint is independently necessary; together they form a complete security gate.
+`refund_milestone` allows the client to return unused escrow funds on a per-milestone basis.
+The function is designed with defence-in-depth to prevent every known class of refund abuse.
 
-### Constraint 1: Completion Gate
+### Security Properties
 
-**Purpose:** Prevent reputation issuance before work is complete.
+#### 1. No double-refund
 
-**Implementation:**
-```rust
-if contract.status != ContractStatus::Completed {
-    env.panic_with_error(EscrowError::NotCompleted);
-}
-```
+Each `Milestone` carries a `refunded: bool` flag that is set atomically when the refund is
+applied.  Any subsequent call that includes the same milestone index panics with
+`EscrowError::MilestoneAlreadyRefunded`.  The flag is stored in persistent contract storage
+and is never reset.
 
-**Threat Mitigated:** Freelancer issues reputation after partial work delivery.
+#### 2. No refund-after-release
 
-**Residual Risk:** None. The status transition to `Completed` requires all milestones to be released, which requires client approval for each milestone.
+A milestone that has already been released to the freelancer (`released == true`) cannot be
+refunded.  The check is performed before any state mutation, so the transaction reverts
+cleanly with `EscrowError::MilestoneAlreadyReleased`.
 
----
+#### 3. Balance cap — refund ≤ available escrow balance
 
-### Constraint 2: Milestone Resolution Gate
-
-**Purpose:** Ensure all milestones are released before reputation issuance.
-
-**Implementation:**
-- Contract transitions to `Completed` only when all milestones are released
-- Each milestone release requires explicit client approval
-- `release_milestone` function checks and sets milestone released flags
-
-**Threat Mitigated:** Client could otherwise call `issue_reputation` after releasing only some milestones.
-
-**Residual Risk:** None. The contract enforces this at the state transition level.
-
----
-
-### Constraint 3: Single-Issuance Guard
-
-**Purpose:** Prevent double-issuance of reputation for the same contract.
-
-**Implementation:**
-```rust
-let reputation_issued_key = DataKey::ReputationIssued(contract_id);
-if env.storage().persistent().get::<_, bool>(&reputation_issued_key).unwrap_or(false) {
-    env.panic_with_error(EscrowError::ReputationAlreadyIssued);
-}
-env.storage().persistent().set(&reputation_issued_key, &true);
-```
-
-**Threat Mitigated:** Same reputation event issued twice, inflating freelancer's credential count.
-
-**Residual Risk:** Extremely low. The immutable flag is set before event emission (checks-effects-interactions pattern). Soroban transaction atomicity ensures no race conditions.
-
----
-
-### Constraint 4: Freelancer Match
-
-**Purpose:** Prevent reputation issuance to wrong freelancer address.
-
-**Implementation:**
-```rust
-if freelancer != contract.freelancer {
-    env.panic_with_error(EscrowError::FreelancerMismatch);
-}
-```
-
-**Threat Mitigated:** Attacker issues reputation to their own address instead of the actual freelancer.
-
-**Residual Risk:** None. The freelancer address is set at contract creation and cannot be changed.
-
----
-
-### Constraint 5: Rating Bounds
-
-**Purpose:** Ensure rating is within valid range [1, 5].
-
-**Implementation:**
-```rust
-if rating < 1 || rating > 5 {
-    env.panic_with_error(EscrowError::InvalidRating);
-}
-```
-
-**Threat Mitigated:** Invalid ratings (0, negative, or > 5) could corrupt reputation aggregates.
-
-**Residual Risk:** None. The bounds are hard-coded and cannot be bypassed.
-
----
-
-### Threat 16: Unauthorized Reputation Issuance (Severity: HIGH)
-
-**Attack:** Non-client attempts to issue reputation.
-
-**Scenario:**
-1. Freelancer or third party calls `issue_reputation` without client authorization.
-2. Reputation is issued without client's consent.
-
-**Mitigations:**
-
-1. **Caller Authorization:**
-   - `caller.require_auth()` validates cryptographic signature.
-   - Only the client address stored in the contract can authorize.
-
-2. **Role Verification:**
-   - `if caller != contract.client { env.panic_with_error(EscrowError::UnauthorizedRole); }`
-   - Explicit check ensures only the client can issue reputation.
-
-**Residual Risk:** Very low. Requires client's private key to be compromised.
-
----
-
-### Threat 17: Reputation Event Manipulation (Severity: MEDIUM)
-
-**Attack:** Attacker manipulates event data to confuse indexers.
-
-**Scenario:**
-1. Attacker triggers event with unexpected parameters.
-2. Off-chain indexers store corrupted data.
-
-**Mitigations:**
-
-1. **Event Schema Stability:**
-   - Event structure is fixed: `("reputation_issued", contract_id) -> (freelancer, rating, timestamp)`
-   - All parameters are validated before emission.
-
-2. **Atomic Emission:**
-   - Event is emitted only after all checks pass.
-   - Transaction reverts on any failure; no partial events.
-
-**Residual Risk:** Low. Indexers should validate event data against on-chain state.
-
----
-
-### Reputation Event Schema
-
-The `reputation_issued` event follows this stable schema for indexers:
+Before any state is mutated the function computes:
 
 ```
-Topics: (Symbol::new("reputation_issued"), contract_id)
-Data: (freelancer: Address, rating: i128, timestamp: u64)
+available = total_deposited − released_amount − refunded_amount
 ```
 
-**Indexer Recommendations:**
-1. Deduplicate by `contract_id` - only the first event is valid.
-2. Validate `rating` is in [1, 5] before storing (defense in depth).
-3. Cross-check `freelancer` matches the contract's stored freelancer.
-4. Verify contract status is `Completed` before accepting reputation.
+If `available < sum(requested milestone amounts)` the call panics with
+`EscrowError::InsufficientEscrowBalance`.  This prevents the contract from ever entering a
+state where `refunded_amount > total_deposited − released_amount`.
 
----
+#### 4. Accounting invariant
 
-### Reputation Security Summary
+The invariant `total_deposited == released_amount + refunded_amount + available_balance` is
+maintained after every operation.  `get_refundable_balance` exposes the available balance so
+off-chain systems can verify it at any time.
 
-| Constraint | Threat | Defense | Severity |
-|------------|--------|---------|----------|
-| Completion Gate | Premature issuance | Status check | HIGH |
-| Milestone Resolution | Partial work credentialing | All milestones released | HIGH |
-| Single-Issuance | Double-counting | Immutable flag | CRITICAL |
-| Freelancer Match | Wrong recipient | Address verification | MEDIUM |
-| Rating Bounds | Invalid data | Range validation | LOW |
-| Caller Authorization | Unauthorized issuance | Cryptographic auth | HIGH |
+#### 5. Duplicate-index guard
 
----
+A single `refund_milestone` call that lists the same milestone index more than once is
+rejected with `EscrowError::DuplicateMilestoneInRefund` before any state is touched.
 
-## Version
+#### 6. Atomic all-or-nothing semantics
 
-- **Version:** 0.4.0
-- **Last Updated:** 2026-04-25
-- **Threat Model:** Complete (updated for reputation issuance gating)
-- **Risk Assessment:** Mitigations adequate for production use with noted caveats.
+All validation (bounds check, released check, refunded check, balance check) is performed
+in a read-only pass over the milestone list before any writes occur.  If any check fails the
+entire transaction reverts; no partial refund is ever committed.
+
+#### 7. Status transition to `Refunded`
+
+When every milestone is either released or refunded the contract status transitions to
+`ContractStatus::Refunded`.  This is a terminal state: no further deposits, releases, or
+refunds are possible.
+
+#### 8. Event emission for indexers
+
+Two events are emitted on a successful call:
+
+| Event | Topics | Data |
+|-------|--------|------|
+| `milestone_refunded` | `(contract_id,)` | `(milestone_idx, amount, timestamp)` |
+| `contract_refunded`  | `(contract_id,)` | `(total_refund, cumulative_refunded, timestamp)` |
+
+Per-milestone events allow indexers to track individual refunds; the contract-level event
+provides a summary for dashboards.
+
+### Threat Analysis
+
+| Threat | Mitigation | Residual Risk |
+|--------|-----------|---------------|
+| Double-refund same milestone | `refunded` flag, panics on second attempt | Negligible |
+| Refund after release | `released` check before any mutation | Negligible |
+| Refund exceeds balance | Balance cap check before mutation | Negligible |
+| Duplicate indices in one call | O(n²) dedup check (n ≤ 10) | Negligible |
+| Partial state on validation failure | All-or-nothing validation pass | Negligible |
+| Indexer double-counting | Per-milestone events keyed by `(contract_id, milestone_idx)` | Low (indexer must deduplicate) |
+
+### Coverage Matrix Update
+
+| Operation | On-Chain Security | Test Coverage |
+|-----------|------------------|---------------|
+| `refund_milestone` — single milestone | Balance cap, released/refunded flags | **HIGH** |
+| `refund_milestone` — multiple milestones | Duplicate check, all-or-nothing | **HIGH** |
+| `refund_milestone` — all milestones | Status → Refunded | **HIGH** |
+| Mixed release + refund | Invariant verification | **HIGH** |
+| Double-refund guard | `MilestoneAlreadyRefunded` error | **HIGH** |
+| Refund-after-release guard | `MilestoneAlreadyReleased` error | **HIGH** |
+| Insufficient balance guard | `InsufficientEscrowBalance` error | **HIGH** |
+| Release-after-refund guard | `MilestoneAlreadyRefunded` error | **HIGH** |
