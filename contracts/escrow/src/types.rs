@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror, Address, String, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,10 +71,8 @@ pub enum EscrowError {
     AmountExceedsMaximum = 38,
     InvalidStroopPrecision = 39,
     ExceedsContractMaximum = 40,
-    // Accounting invariant violations
-    AccountingInvariantViolated = 41,
-    // Audit event errors
-    AuditEventFailed = 42,
+    ExactDepositRequired = 41,
+    DepositWouldExceedTotal = 42,
 }
 
 #[contracttype]
@@ -87,6 +85,7 @@ pub enum ContractStatus {
     Disputed = 4,
     Cancelled = 5,
     Refunded = 6,
+    PartiallyFunded = 7,
 }
 
 #[contracttype]
@@ -150,4 +149,11 @@ pub struct ContractSummary {
     pub refundable_balance: i128,
     pub released_milestone_count: u32,
     pub milestones: Vec<MilestoneSummary>,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DepositMode {
+    ExactTotal = 0,
+    Incremental = 1,
 }

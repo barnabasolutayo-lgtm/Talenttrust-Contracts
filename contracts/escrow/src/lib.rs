@@ -4,14 +4,12 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Ve
 
 mod types;
 pub use types::{
-    ContractStatus, ContractSummary, DataKey, EscrowError, Milestone, MilestoneSummary,
-    ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, Milestone,
+    MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 mod amount_validation;
-pub use amount_validation::{
-    safe_add_amounts, safe_subtract_amounts, AmountValidationError,
-};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValidationError};
 
 mod ttl;
 pub use ttl::{
@@ -44,6 +42,7 @@ pub struct EscrowContractData {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub reputation_issued: bool,
+    pub deposit_mode: DepositMode,
 }
 
 #[soroban_sdk::contracttype]
@@ -333,6 +332,7 @@ impl Escrow {
         client: Address,
         freelancer: Address,
         milestone_amounts: Vec<i128>,
+        deposit_mode: DepositMode,
     ) -> u32 {
         Self::require_not_paused(&env);
         client.require_auth();
@@ -379,6 +379,7 @@ impl Escrow {
             released_amount: 0,
             refunded_amount: 0,
             reputation_issued: false,
+            deposit_mode,
         };
         env.storage()
             .persistent()
@@ -409,14 +410,27 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        let old_status = contract.status;
+        contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
-        contract.total_deposited =
-            safe_add_amounts(contract.total_deposited, amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-
-        if contract.status == ContractStatus::Created {
+        if contract.deposit_mode == DepositMode::ExactTotal {
+            if amount != total_milestones || contract.total_deposited > 0 {
+                env.panic_with_error(EscrowError::ExactDepositRequired);
+            }
+            contract.total_deposited = amount;
             contract.status = ContractStatus::Funded;
+        } else {
+            let new_total = safe_add_amounts(contract.total_deposited, amount)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+            if new_total > total_milestones {
+                env.panic_with_error(EscrowError::DepositWouldExceedTotal);
+            }
+            contract.total_deposited = new_total;
+            if new_total == total_milestones {
+                contract.status = ContractStatus::Funded;
+            } else {
+                contract.status = ContractStatus::PartiallyFunded;
+            }
         }
 
         // Enforce accounting invariant
@@ -458,17 +472,15 @@ impl Escrow {
         }
 
         let milestone_amount = contract.milestones.get(milestone_index).unwrap();
-        let available = contract.total_deposited
-            - contract.released_amount
-            - contract.refunded_amount;
+        let available =
+            contract.total_deposited - contract.released_amount - contract.refunded_amount;
         if available < milestone_amount {
             env.panic_with_error(EscrowError::InsufficientFunds);
         }
 
         env.storage().persistent().set(&released_key, &true);
-        contract.released_amount =
-            safe_add_amounts(contract.released_amount, milestone_amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
         let old_status = contract.status;
 
@@ -483,14 +495,8 @@ impl Escrow {
             contract.status = ContractStatus::Completed;
             // Increment pending reputation credits
             let credits_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
-            let credits: u32 = env
-                .storage()
-                .persistent()
-                .get(&credits_key)
-                .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&credits_key, &(credits + 1));
+            let credits: u32 = env.storage().persistent().get(&credits_key).unwrap_or(0);
+            env.storage().persistent().set(&credits_key, &(credits + 1));
         }
 
         // Enforce accounting invariant
@@ -574,9 +580,7 @@ impl Escrow {
         let credits_key = DataKey::PendingReputationCredits(freelancer.clone());
         let credits: u32 = env.storage().persistent().get(&credits_key).unwrap_or(0);
         if credits > 0 {
-            env.storage()
-                .persistent()
-                .set(&credits_key, &(credits - 1));
+            env.storage().persistent().set(&credits_key, &(credits - 1));
         }
 
         env.events().publish(
