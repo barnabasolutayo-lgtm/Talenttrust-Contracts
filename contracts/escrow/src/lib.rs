@@ -111,6 +111,9 @@ pub struct MainnetReadinessInfo {
 #[contract]
 pub struct Escrow;
 
+mod migration;
+pub use migration::PendingClientMigration;
+
 #[contractimpl]
 impl Escrow {
     // ─── Guard ───────────────────────────────────────────────────────────────
