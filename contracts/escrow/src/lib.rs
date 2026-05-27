@@ -483,6 +483,7 @@ impl Escrow {
 
     // ─── Mainnet readiness ────────────────────────────────────────────────────
 
+    /// Return the mainnet readiness checklist and immutable deployment caps.
     pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo {
         let checklist = Self::load_checklist(&env);
         MainnetReadinessInfo {
@@ -504,7 +505,7 @@ impl Escrow {
 
     // ─── Contract lifecycle ───────────────────────────────────────────────────
 
-    /// Create a new escrow contract. Blocked when paused.
+    /// Create a new escrow contract. Requires client auth and is blocked when paused.
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -547,7 +548,7 @@ impl Escrow {
         )
     }
 
-    /// Deposit funds into an escrow contract. Blocked when paused.
+    /// Deposit funds into escrow accounting. Blocked when paused.
     pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
         Self::require_not_paused(&env);
 
@@ -619,26 +620,12 @@ impl Escrow {
         true
     }
 
-    /// Release a funded milestone payment to the freelancer.
+    /// Release a milestone from funded escrow accounting. Blocked when paused.
     ///
-    /// # Parameters
-    /// - `contract_id`: The ID of the escrow contract.
-    /// - `caller`: The address authorizing the release. Must be the recorded client.
-    /// - `milestone_index`: Zero-based index of the milestone to release.
-    ///
-    /// # Errors / Panics
-    /// - `ContractPaused` — contract is paused or in emergency.
-    /// - `ContractNotFound` — no contract exists for `contract_id`.
-    /// - `UnauthorizedRole` — `caller` is not the recorded client.
-    /// - `InvalidMilestone` — `milestone_index` is out of range.
-    /// - `AlreadyReleased` — milestone was already released.
-    /// - `InsufficientFunds` — available balance is less than the milestone amount.
-    pub fn release_milestone(
-        env: Env,
-        contract_id: u32,
-        caller: Address,
-        milestone_index: u32,
-    ) -> bool {
+    /// Current behavior: this function validates milestone state and funded
+    /// balance, but does not authenticate a caller. Do not rely on client or
+    /// arbiter authorization until the release authorization entrypoint lands.
+    pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
         Self::require_not_paused(&env);
         caller.require_auth();
 
@@ -990,60 +977,7 @@ impl Escrow {
 
     // ─── Read-only queries (not blocked by pause) ─────────────────────────────
 
-    /// Returns a versioned, denormalized snapshot of the escrow contract for
-    /// off-chain indexers. Intentionally unauthenticated and never blocked by
-    /// pause or emergency guards so that data availability is always maintained.
-    ///
-    /// Panics with [`EscrowError::ContractNotFound`] if `contract_id` does not exist.
-    pub fn get_contract_summary(env: Env, contract_id: u32) -> ContractSummary {
-        let contract = env
-            .storage()
-            .persistent()
-            .get::<_, EscrowContractData>(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
-
-        let mut total_amount: i128 = 0;
-        let mut released_milestone_count: u32 = 0;
-        let mut milestones = Vec::new(&env);
-
-        for i in 0..contract.milestones.len() {
-            let amount = contract.milestones.get(i).unwrap();
-            total_amount += amount;
-            let released = env
-                .storage()
-                .persistent()
-                .get::<_, bool>(&DataKey::MilestoneReleased(contract_id, i))
-                .unwrap_or(false);
-            if released {
-                released_milestone_count += 1;
-            }
-            milestones.push_back(MilestoneSummary {
-                index: i,
-                amount,
-                released,
-                refunded: false,
-            });
-        }
-
-        let refundable_balance =
-            contract.total_deposited - contract.released_amount - contract.refunded_amount;
-
-        ContractSummary {
-            schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
-            client: contract.client,
-            freelancer: contract.freelancer,
-            arbiter: contract.arbiter,
-            status: contract.status,
-            reputation_issued: contract.reputation_issued,
-            total_amount,
-            funded_amount: contract.total_deposited,
-            released_amount: contract.released_amount,
-            refundable_balance,
-            released_milestone_count,
-            milestones,
-        }
-    }
-
+    /// Return the stored escrow contract data or panic with `ContractNotFound`.
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
@@ -1051,33 +985,14 @@ impl Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
     }
 
+    /// Return the aggregate reputation record for a freelancer, if one exists.
     pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
         env.storage()
             .persistent()
             .get(&DataKey::Reputation(freelancer))
     }
 
-    /// Returns the freelancer's average reputation rating, scaled by 100.
-    ///
-    /// The return value uses two-decimal fixed-point precision, so `450`
-    /// represents `4.50`. Returns `None` when `completed_contracts == 0`.
-    pub fn get_average_rating(env: Env, freelancer: Address) -> Option<i128> {
-        let record: ReputationRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Reputation(freelancer.clone()))
-            .unwrap_or_default();
-        if record.completed_contracts == 0 {
-            return None;
-        }
-        let numerator = record
-            .total_rating
-            .checked_mul(100)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-        let denominator = i128::from(record.completed_contracts);
-        Some(numerator / denominator)
-    }
-
+    /// Return reputation credits earned by completed contracts and not yet consumed.
     pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
         env.storage()
             .persistent()

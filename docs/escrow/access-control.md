@@ -1,86 +1,29 @@
 # Escrow Access Control Enforcement
 
-This document describes role checks enforced across all state-changing escrow entrypoints.
+This document describes role checks currently enforced in
+`contracts/escrow/src/lib.rs`.
 
-## Objective
+## Implemented Checks
 
-Ensure only valid contract actors (client, freelancer, arbiter) can invoke state mutations, and only in role-appropriate flows.
+- `initialize(admin)` requires `admin.require_auth()` and can run only once.
+- `pause`, `unpause`, `activate_emergency_pause`, and `resolve_emergency`
+  require the stored admin's authorization.
+- `create_contract(client, freelancer, milestone_amounts, deposit_mode)`
+  requires `client.require_auth()`.
+- `issue_reputation(contract_id, caller, freelancer, rating)` requires
+  `caller.require_auth()` and `caller == contract.client`.
+- `cancel_contract(contract_id, caller)` requires `caller.require_auth()` and
+  the caller must be the stored client or freelancer.
 
-## Role Model
+## Current Release Caveat
 
-- Client:
-  - creates contract (with freelancer)
-  - deposits escrow funds
-  - can approve/release milestones depending on `release_auth`
-  - issues reputation after completion
-- Freelancer:
-  - must authorize participation at contract creation
-  - is the only valid subject for post-completion reputation on that contract
-- Arbiter (optional):
-  - can approve/release milestones where selected release mode allows it
+`release_milestone(contract_id, milestone_index)` does not authenticate a
+caller in the current implementation. It enforces pause state, contract
+existence, milestone bounds, duplicate-release prevention, and available funded
+balance only.
 
-## Entry Point Enforcement
+## Not Implemented
 
-### `create_contract`
-
-- Requires `client.require_auth()` and `freelancer.require_auth()`.
-- Rejects same-address client/freelancer.
-- Validates arbiter distinctness from both client and freelancer.
-- Enforces arbiter presence for modes that require arbiter participation.
-
-### `deposit_funds`
-
-- Requires caller auth.
-- Caller must equal contract client.
-- Contract must be in `Created` status.
-- Deposit amount must equal milestone total.
-
-### `approve_milestone_release`
-
-- Requires caller auth.
-- Caller role validated against `release_auth` mode.
-- Rejects unauthorized roles and duplicate approvals.
-- Rejects invalid or already released milestones.
-
-### `release_milestone`
-
-- Accepts an explicit `caller: Address` parameter.
-- Calls `caller.require_auth()` immediately — cryptographic proof of authorization is mandatory before any state is read or mutated.
-- Asserts `caller == contract.client`; any other address panics with `EscrowError::UnauthorizedRole` (fail-closed).
-- Rejects invalid or already released milestones (`InvalidMilestone`, `AlreadyReleased`).
-- Rejects releases when available balance is insufficient (`InsufficientFunds`).
-- The `DataKey::MilestoneReleased` guard prevents double-release and duplicate token transfers.
-
-#### Fail-closed design
-
-The authorization check is placed before any storage reads of sensitive state. If `require_auth` fails the transaction is aborted by the Soroban host before the contract body executes, ensuring no partial state mutation is possible. The explicit `caller != contract.client` check provides a second, contract-level role boundary independent of the host auth mechanism.
-
-### `issue_reputation`
-
-- Requires caller auth.
-- Caller must be the contract client.
-- Provided freelancer must match contract freelancer.
-- Contract must be `Completed` and reputation not previously issued.
-
-## Release Authorization Matrix
-
-- `ClientOnly`: client-only approve and release.
-- `ArbiterOnly`: arbiter-only approve and release.
-- `ClientAndArbiter`: either client or arbiter can approve/release.
-- `MultiSig`: both client and arbiter approvals required before release.
-
-## Latest Test Output
-
-Date: `2026-03-24`
-
-```text
-running 32 tests
-................................
-test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-```
-
-## Coverage Snapshot
-
-- Command: `cargo llvm-cov --workspace --all-features --summary-only`
-- `contracts/escrow/src/lib.rs` line coverage: `97.71%`
-- Workspace total line coverage: `99.16%`
+Approval-based release authorization, arbiter release authorization, and
+multi-party release modes are not live entrypoints. Treat any approval or
+arbiter release design as planned until implemented and tested.
