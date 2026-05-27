@@ -343,6 +343,7 @@ impl Escrow {
 
     // ─── Mainnet readiness ────────────────────────────────────────────────────
 
+    /// Return the mainnet readiness checklist and immutable deployment caps.
     pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo {
         let checklist = Self::load_checklist(&env);
         MainnetReadinessInfo {
@@ -364,7 +365,7 @@ impl Escrow {
 
     // ─── Contract lifecycle ───────────────────────────────────────────────────
 
-    /// Create a new escrow contract. Blocked when paused.
+    /// Create a new escrow contract. Requires client auth and is blocked when paused.
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -439,7 +440,7 @@ impl Escrow {
         id
     }
 
-    /// Deposit funds into an escrow contract. Blocked when paused.
+    /// Deposit funds into escrow accounting. Blocked when paused.
     pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
         Self::require_not_paused(&env);
 
@@ -503,7 +504,11 @@ impl Escrow {
         true
     }
 
-    /// Release a milestone to the freelancer. Blocked when paused.
+    /// Release a milestone from funded escrow accounting. Blocked when paused.
+    ///
+    /// Current behavior: this function validates milestone state and funded
+    /// balance, but does not authenticate a caller. Do not rely on client or
+    /// arbiter authorization until the release authorization entrypoint lands.
     pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
         Self::require_not_paused(&env);
 
@@ -698,6 +703,7 @@ impl Escrow {
 
     // ─── Read-only queries (not blocked by pause) ─────────────────────────────
 
+    /// Return the stored escrow contract data or panic with `ContractNotFound`.
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
@@ -705,12 +711,14 @@ impl Escrow {
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
     }
 
+    /// Return the aggregate reputation record for a freelancer, if one exists.
     pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
         env.storage()
             .persistent()
             .get(&DataKey::Reputation(freelancer))
     }
 
+    /// Return reputation credits earned by completed contracts and not yet consumed.
     pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
         env.storage()
             .persistent()
