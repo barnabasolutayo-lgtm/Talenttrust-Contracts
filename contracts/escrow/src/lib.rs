@@ -31,11 +31,14 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Ve
 mod types;
 pub use types::{
     ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, Milestone,
-    MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    MilestoneSummary, ProtocolParameters, ReadinessChecklist,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 mod amount_validation;
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValidationError};
+
+mod governance;
 
 mod ttl;
 pub use ttl::{
