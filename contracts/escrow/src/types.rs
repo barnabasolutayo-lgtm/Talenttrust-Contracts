@@ -25,6 +25,7 @@ pub enum DataKey {
     ProtocolParameters,
     ProtocolFeeBps,
     AccumulatedProtocolFees,
+    GovernedParameters,
     ReadinessChecklist,
 }
 
@@ -79,8 +80,7 @@ pub enum EscrowError {
     ExactDepositRequired = 41,
     DepositWouldExceedTotal = 42,
     AccountingInvariantViolated = 43,
-    ArbiterRequired = 44,
-    InvalidDisputeSplit = 45,
+    InvalidProtocolParameters = 44,
 }
 
 #[contracttype]
@@ -131,22 +131,9 @@ impl Default for ReadinessChecklist {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProtocolParameters {
-    pub min_milestone_amount: i128,
-    pub max_milestones: u32,
-    pub min_reputation_rating: i128,
-    pub max_reputation_rating: i128,
-}
-
-impl Default for ProtocolParameters {
-    fn default() -> Self {
-        ProtocolParameters {
-            min_milestone_amount: 1,
-            max_milestones: 16,
-            min_reputation_rating: 1,
-            max_reputation_rating: 5,
-        }
-    }
+pub struct GovernedParameters {
+    pub protocol_fee_bps: u32,
+    pub max_escrow_total_stroops: i128,
 }
 
 // ─── Indexer summary types ────────────────────────────────────────────────────

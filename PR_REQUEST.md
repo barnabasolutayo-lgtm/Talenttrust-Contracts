@@ -1,52 +1,41 @@
-# PR Request: Add Two-Step Governance Admin Transfer for Escrow
+# Pull Request Request
 
 ## Summary
-This PR adds a secure two-step admin transfer mechanism to the TalentTrust escrow governance layer in `contracts/escrow`.
-
-## What changed
-- Implemented governance storage and management in `contracts/escrow/src/governance.rs`
-- Added protocol parameter support and governance state keys in `contracts/escrow/src/types.rs`
-- Updated `contracts/escrow/src/lib.rs` to expose governance functions and types
-- Added/updated governance tests in `contracts/escrow/src/test/governance.rs`
-- Clarified governance documentation in `docs/escrow/governance-security.md`
-
-## New public governance behavior
-- `initialize_protocol_governance(admin, ...) -> bool`
-- `initialize_governance(admin) -> bool`
-- `update_protocol_parameters(...) -> bool`
-- `propose_governance_admin(new_admin) -> bool`
-- `accept_governance_admin() -> bool`
-- `get_protocol_parameters() -> ProtocolParameters`
-- `get_governance_admin() -> Option<Address>`
-- `get_pending_governance_admin() -> Option<Address>`
-
-## Security model enforced
-- Current governance admin must authenticate to propose a new admin
-- Proposed admin must authenticate to accept transfer
-- Pending admin state is cleared on acceptance
-- A new proposal overwrites any existing pending admin
-- Current admin retains control until the transfer is accepted
+This PR adds an admin-gated governance parameter setter to the escrow contract in `contracts/escrow`. It introduces `set_governed_params(admin, protocol_fee_bps, max_escrow_total_stroops)`, persists governed parameters, and flips the readiness checklist flag `ReadinessChecklist.governed_params_set` to `true`.
 
 ## Files changed
-- `contracts/escrow/src/types.rs`
-- `contracts/escrow/src/lib.rs`
 - `contracts/escrow/src/governance.rs`
-- `contracts/escrow/src/test/governance.rs`
+- `contracts/escrow/src/lib.rs`
+- `contracts/escrow/src/types.rs`
 - `contracts/escrow/src/test/mainnet_readiness.rs`
-- `docs/escrow/governance-security.md`
+- `contracts/escrow/src/test/mod.rs`
+- `docs/escrow/mainnet-readiness.md`
 
-## Test plan
-Run locally in the repo root:
+## What this change does
+- Adds `GovernedParameters` storage and `DataKey::GovernedParameters`
+- Adds a secure admin-controlled setter for governed parameters
+- Enforces validation of `protocol_fee_bps` and `max_escrow_total_stroops`
+- Ensures `governed_params_set` becomes `true` only after a successful admin-set operation
+- Exposes `get_governed_parameters()` for read-back
+- Updates readiness documentation to match the new setter flow
+
+## Security and behavior notes
+- `set_governed_params` requires `initialize()` to have been called and authenticated as the registered admin.
+- Invalid parameter updates and unauthorized callers do not mutate readiness state.
+- The readiness checklist update is atomic and persisted together with the governed parameter values.
+
+## Testing
+Run the following commands from the repo root:
 
 ```bash
-cargo fmt --all
-cargo test -p escrow
-cargo test -p escrow governance
-cargo test test::performance -p escrow
 cargo fmt --all -- --check
+cargo test -p escrow
 ```
 
-## Notes
-- This PR targets the escrow governance layer only.
-- The implementation is intentionally scoped to the governance admin transfer flow and its supporting protocol parameter state.
-- The document is written for reviewers and release notes.
+## Branch and commit guidance
+- Branch name: `feature/governed-params-setter`
+- Example commit message: `feat(escrow): add governed params setter wiring readiness`
+
+## Additional notes
+- This PR is scoped to the TalentTrust escrow Soroban contract.
+- Documentation in `docs/escrow/mainnet-readiness.md` has been aligned with the new contract behavior.
