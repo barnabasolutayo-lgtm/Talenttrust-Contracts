@@ -9,7 +9,7 @@ use crate::{Escrow, EscrowClient, EscrowError};
 mod accounting_invariants;
 mod emergency_controls;
 mod pause_controls;
-mod storage;
+mod reputation;
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
