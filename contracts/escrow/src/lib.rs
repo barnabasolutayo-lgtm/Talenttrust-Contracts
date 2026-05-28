@@ -29,7 +29,7 @@ mod approvals;
 
 pub use types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
@@ -84,6 +84,8 @@ impl Escrow {
     /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
     /// * `MissingArbiter` - If arbiter is required but not provided
     /// * `InvalidArbiter` - If arbiter is same as client or freelancer
+    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+    /// * `ContractIdCollision` - If the allocated id slot is already occupied
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -121,34 +123,11 @@ impl Escrow {
 
         for amount in milestones.iter() {
             if amount <= 0 {
-                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+                env.panic_with_error(Error::InvalidMilestoneAmount);
             }
         }
-        if milestone_amounts.is_empty() {
-            env.panic_with_error(EscrowError::EmptyMilestones);
-        }
-        if milestone_amounts.len() > MAX_MILESTONES {
-            env.panic_with_error(EscrowError::TooManyMilestones);
-        }
 
-        let mut total: i128 = 0;
-        for i in 0..milestone_amounts.len() {
-            let amt = milestone_amounts.get(i).unwrap();
-            if amt <= 0 {
-                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
-            }
-            total = safe_add_amounts(total, amt)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-        }
-        if total > MAX_TOTAL_ESCROW_STROOPS {
-            env.panic_with_error(EscrowError::InvalidMilestoneAmount);
-        }
-
-        let id: u32 = env
-            .storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::NextContractId)
-            .unwrap_or(1);
+        let id = Self::next_contract_id(&env);
 
         // Store contract metadata
         let contract = Contract {
@@ -170,9 +149,11 @@ impl Escrow {
         for amount in milestones.iter() {
             milestone_vec.push_back(Milestone {
                 amount,
+                funded_amount: 0,
                 released: false,
                 refunded: false,
                 work_evidence: None,
+                refunded_amount: 0,
             });
         }
         let milestone_key = Symbol::new(&env, "milestones");
@@ -180,23 +161,43 @@ impl Escrow {
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
-
-        Self::emit_audit_event(
-            env,
-            id,
-            ContractStatus::Created,
-            ContractStatus::Created,
-            &client,
-        );
+        Self::bump_next_contract_id(&env, id);
 
         env.events().publish(
             (symbol_short!("created"), id),
             (client, freelancer, env.ledger().timestamp()),
         );
         id
+    }
+
+    /// Returns the next contract id after verifying the slot is unused.
+    fn next_contract_id(env: &Env) -> u32 {
+        let id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1);
+
+        if env
+            .storage()
+            .persistent()
+            .get::<_, Contract>(&DataKey::Contract(id))
+            .is_some()
+        {
+            env.panic_with_error(Error::ContractIdCollision);
+        }
+
+        id
+    }
+
+    /// Advances [`DataKey::NextContractId`] after a contract is persisted.
+    fn bump_next_contract_id(env: &Env, id: u32) {
+        let next_id = id
+            .checked_add(1)
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &next_id);
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
