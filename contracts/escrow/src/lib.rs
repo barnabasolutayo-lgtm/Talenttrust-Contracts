@@ -641,3 +641,5 @@ mod simple_amount_test;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod tests;
