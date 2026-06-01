@@ -1,31 +1,4 @@
-use soroban_sdk::contracttype;
-
-use crate::{safe_add_amounts, ContractStatus, EscrowContractData, EscrowError};
-
-/// Resolution selected by the assigned arbiter for a disputed escrow.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DisputeResolution {
-    /// Refund all remaining escrowed funds to the client.
-    FullRefund,
-    /// Refund 70% of the remaining balance to the client and release 30% to the freelancer.
-    PartialRefund,
-    /// Release all remaining escrowed funds to the freelancer.
-    FullPayout,
-    /// Apply a custom split of the remaining balance.
-    Split(i128, i128),
-}
-
-impl DisputeResolution {
-    pub fn code(&self) -> u32 {
-        match self {
-            Self::FullRefund => 0,
-            Self::PartialRefund => 1,
-            Self::FullPayout => 2,
-            Self::Split(_, _) => 3,
-        }
-    }
-}
+use crate::{safe_add_amounts, ContractStatus, Contract as EscrowContractData, EscrowError, DisputeResolution};
 
 pub fn resolution_payouts(
     contract: &EscrowContractData,

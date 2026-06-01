@@ -7,38 +7,19 @@ pub enum DataKey {
     Initialized,
     Contract(u32),
     NextContractId,
+    Admin,
+    ReadinessChecklist,
+    GovernedParameters,
+    ProtocolFeeBps,
+    PendingAdmin,
+    InitializedV2,
     /// Stores milestone approval flags (contract_id, milestone_index) -> MilestoneApprovals
     /// Stored in temporary storage with TTL for expiry grace period
     MilestoneApprovals(u32, u32),
-}
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Error {
-    AlreadyInitialized = 1,
-    NotInitialized = 2,
-    IndexOutOfBounds = 3,
-    AlreadyReleased = 4,
-    InvalidStatusTransition = 5,
-    EmptyRefundRequest = 6,
-    DuplicateMilestoneInRefund = 7,
-    AlreadyRefunded = 8,
-    InsufficientFunds = 9,
-    ContractNotFound = 10,
-    UnauthorizedRole = 11,
-    MissingArbiter = 12,
-    InvalidArbiter = 13,
-    InvalidParticipants = 14,
-    AmountMustBePositive = 15,
-    InvalidState = 16,
-    MilestoneAlreadyReleased = 17,
-    AlreadyApproved = 18,
-    ApprovalExpired = 19,
-    InsufficientApprovals = 20,
-    FreelancerMismatch = 21,
-    InvalidRating = 22,
-    ReputationAlreadyIssued = 23,
+    Finalization(u32),
+    PendingClientMigration(u32),
+    ReputationIssued(u32),
+    MilestoneReleased(u32, u32),
 }
 
 #[contracttype]
@@ -55,11 +36,18 @@ pub enum ContractStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
     pub amount: i128,
-    pub funded_amount: i128,
     pub released: bool,
     pub refunded: bool,
     pub work_evidence: Option<String>,
-    pub refunded_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneSchedule {
+    pub due_date: Option<u64>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub updated_at: u64,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
@@ -118,7 +106,7 @@ pub struct ContractSummary {
     pub released_amount: i128,
     pub refundable_balance: i128,
     pub released_milestone_count: u32,
-    pub milestones: Vec<MilestoneSummary>,
+    pub milestones: soroban_sdk::Vec<MilestoneSummary>,
 }
 
 #[contracttype]
@@ -126,6 +114,23 @@ pub struct ContractSummary {
 pub enum DepositMode {
     ExactTotal = 0,
     Incremental = 1,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeResolution {
+    FullRefund = 0,
+    PartialRefund = 1,
+    FullPayout = 2,
+    Split(i128, i128),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizationRecord {
+    pub finalizer: Address,
+    pub timestamp: u64,
+    pub summary: ContractSummary,
 }
 
 #[contracttype]
@@ -139,6 +144,7 @@ pub struct Contract {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
+    pub total_deposited: i128,
 }
 
 /// Defines who can approve milestone releases

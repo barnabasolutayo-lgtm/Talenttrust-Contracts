@@ -1,7 +1,5 @@
 use crate::ttl::{read_if_live, remove_transient, store_with_ttl, PENDING_MIGRATION_TTL_LEDGERS};
-use crate::{
-    ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, EscrowContractData, EscrowError,
-};
+use crate::{ContractStatus, DataKey, EscrowError, Contract as EscrowContractData};
 use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
@@ -14,7 +12,7 @@ pub struct PendingClientMigration {
 }
 
 #[contractimpl]
-impl Escrow {
+impl crate::Escrow {
     fn pending_migration_key(contract_id: u32) -> DataKey {
         DataKey::PendingClientMigration(contract_id)
     }
@@ -39,15 +37,10 @@ impl Escrow {
     }
 
     fn pending_migration_exists(env: &Env, contract_id: u32) -> bool {
-        read_if_live::<_, PendingClientMigration>(env, &Self::pending_migration_key(contract_id))
+        read_if_live::<_, PendingClientMigration>(env, &DataKey::PendingClientMigration(contract_id))
             .is_some()
     }
 
-    /// Propose a client migration for an existing contract.
-    ///
-    /// The current client must authorize the call. The proposed client address
-    /// must not be the freelancer or the current client. The pending migration
-    /// is stored in temporary storage with TTL.
     pub fn propose_client_migration(
         env: Env,
         contract_id: u32,
@@ -58,12 +51,11 @@ impl Escrow {
         current_client.require_auth();
 
         let contract = Self::load_contract(&env, contract_id);
-        Self::require_not_finalized(&env, contract_id);
         if current_client != contract.client {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         if new_client == contract.client || new_client == contract.freelancer {
-            env.panic_with_error(EscrowError::InvalidParticipant);
+            env.panic_with_error(EscrowError::InvalidParticipants);
         }
         Self::require_migration_allowed(&env, contract.status);
         if Self::pending_migration_exists(&env, contract_id) {
@@ -92,13 +84,11 @@ impl Escrow {
         true
     }
 
-    /// Accept a live pending client migration and update the contract.
     pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
         Self::require_not_paused(&env);
         new_client.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
-        Self::require_not_finalized(&env, contract_id);
         Self::require_migration_allowed(&env, contract.status);
 
         let key = Self::pending_migration_key(contract_id);
@@ -125,12 +115,10 @@ impl Escrow {
         true
     }
 
-    /// Return true if a live pending client migration exists.
     pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
         Self::pending_migration_exists(&env, contract_id)
     }
 
-    /// Return the live pending client migration record.
     pub fn get_pending_client_migration(env: Env, contract_id: u32) -> PendingClientMigration {
         read_if_live(&env, &Self::pending_migration_key(contract_id))
             .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState))

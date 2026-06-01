@@ -32,7 +32,7 @@ fn funded_contract_with_arbiter(
         &milestones,
         &deposit_mode,
     );
-    assert!(client.deposit_funds(&contract_id, &deposit_amount));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &deposit_amount));
     (client_addr, freelancer_addr, arbiter_addr, contract_id)
 }
 
@@ -99,13 +99,13 @@ fn raise_dispute_requires_assigned_arbiter() {
     let client = create_client(&env, &contract_id);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
-    let escrow_id = client.create_contract(
+    let escrow_id = client.create_contract_simple(
         &client_addr,
         &freelancer_addr,
         &vec![&env, 100_i128],
         &DepositMode::ExactTotal,
     );
-    assert!(client.deposit_funds(&escrow_id, &100_i128));
+    assert!(client.deposit_funds(&escrow_id, &client_addr, &100_i128));
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &client_addr),
@@ -149,7 +149,7 @@ fn resolve_partial_refund_applies_70_30_to_remaining_balance() {
         201_i128,
         DepositMode::ExactTotal,
     );
-    assert!(client.release_milestone(&escrow_id, &0));
+    assert!(client.release_milestone(&escrow_id, &0, &client_addr));
     assert!(client.raise_dispute(&escrow_id, &client_addr));
 
     assert!(client.resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::PartialRefund,));
@@ -256,7 +256,7 @@ fn release_is_blocked_while_disputed() {
     assert!(client.raise_dispute(&escrow_id, &client_addr));
 
     super::assert_contract_error(
-        client.try_release_milestone(&escrow_id, &0),
+        client.try_release_milestone(&escrow_id, &0, &client_addr),
         EscrowError::InvalidStatusTransition,
     );
 }

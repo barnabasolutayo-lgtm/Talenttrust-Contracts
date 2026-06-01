@@ -85,5 +85,5 @@ fn release_milestone_emits_protocol_fee_event_when_fees_active() {
     assert!(client.release_milestone(&contract_id, &0));
 
     let events = env.events().all();
-    assert!(events.iter().any(|event| event.0 == symbol_short!("protocol_fee")));
+    assert!(events.iter().any(|event| event.0 == soroban_sdk::Symbol::new(env, "protocol_fee")));
 }
