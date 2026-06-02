@@ -12,6 +12,7 @@ mod dispute;
 mod emergency_controls;
 mod lifecycle;
 mod pause_controls;
+mod protocol_fees;
 mod ttl_tests;
 
 // ─── Shared constants ─────────────────────────────────────────────────────────

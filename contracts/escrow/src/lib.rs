@@ -24,11 +24,15 @@
 #![allow(clippy::useless_conversion)]
 
 mod approvals;
+mod protocol_fees;
+mod governance;
+mod protocol_fees;
 mod ttl;
 mod types;
 
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
+    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
+    ReleaseAuthorization,
 };
 
 use soroban_sdk::{
@@ -38,11 +42,91 @@ use soroban_sdk::{
 #[contract]
 pub struct Escrow;
 
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EscrowError {
+    InvalidParticipant = 1,
+    EmptyMilestones = 2,
+    InvalidMilestoneAmount = 3,
+    InvalidDepositAmount = 4,
+    InvalidMilestone = 5,
+    ContractNotFound = 6,
+    EmptyRefundRequest = 7,
+    DuplicateMilestoneInRefund = 8,
+    AlreadyReleased = 9,
+    AlreadyRefunded = 10,
+    InsufficientFunds = 11,
+    AlreadyInitialized = 12,
+    InsufficientAccumulatedFees = 13,
+    NotInitialized = 14,
+    UnauthorizedRole = 15,
+    ContractPaused = 16,
+    EmergencyActive = 17,
+    InvalidState = 18,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractData {
+    pub client: Address,
+    pub freelancer: Address,
+    pub milestones: Vec<i128>,
+}
+
 #[contractimpl]
 impl Escrow {
     /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
+    }
+
+    /// Initializes the escrow contract with the operational admin.
+    ///
+    /// This call is single-use and stores the admin address for future
+    /// admin-gated entrypoints such as `withdraw_protocol_fees`.
+    pub fn initialize(env: Env, admin: Address) -> bool {
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::AlreadyInitialized);
+        }
+
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Initialized, &true);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
+
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.initialized = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+
+        env.events().publish(
+            (symbol_short!("init"), Symbol::new(&env, "admin_set")),
+            (admin.clone(), env.ledger().timestamp()),
+        );
+
+        true
+    }
+
+    /// Returns the stored governance admin address, if one has been initialized.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Admin)
+    }
+
+    /// Returns the current mainnet readiness checklist.
+    pub fn get_mainnet_readiness_info(env: Env) -> ReadinessChecklist {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default()
     }
 
     /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
@@ -79,7 +163,6 @@ impl Escrow {
         if client == freelancer {
             env.panic_with_error(Error::InvalidParticipants);
         }
-
         // Validate arbiter requirements
         match release_authorization {
             ReleaseAuthorization::ArbiterOnly | ReleaseAuthorization::ClientAndArbiter
@@ -89,7 +172,6 @@ impl Escrow {
             }
             _ => {}
         }
-
         // Validate arbiter is not client or freelancer
         if let Some(ref arb) = arbiter {
             if arb == &client || arb == &freelancer {
@@ -107,8 +189,6 @@ impl Escrow {
             }
         }
 
-        let id = Self::next_contract_id(&env);
-
         // Extend TTL for NextContractId counter on read
         ttl::extend_next_contract_id_ttl(&env);
 
@@ -116,7 +196,7 @@ impl Escrow {
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
             client: client.clone(),
-            freelancer: freelancer_addr.clone(),
+            freelancer: freelancer.clone(),
             arbiter,
             status: ContractStatus::Created,
             funded_amount: 0,
@@ -145,7 +225,9 @@ impl Escrow {
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
-        Self::bump_next_contract_id(&env, id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(id + 1));
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -217,7 +299,6 @@ impl Escrow {
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
-
         caller.require_auth();
 
         // Can only deposit in Created state
@@ -387,7 +468,7 @@ impl Escrow {
             env.panic_with_error(Error::IndexOutOfBounds);
         }
 
-        let mut milestone = milestones.get(milestone_index).unwrap();
+        let mut milestone = milestones.get(milestone_index).unwrap().clone();
 
         if milestone.released {
             env.panic_with_error(Error::MilestoneAlreadyReleased);
@@ -406,8 +487,24 @@ impl Escrow {
 
         let release_amount = milestone.amount;
         milestone.released = true;
-        milestones.set(milestone_index, milestone);
-        contract.released_amount += release_amount;
+        milestones.set(milestone_index, milestone.clone());
+        contract.released_amount += milestone.amount;
+
+        // Accumulate protocol fees if initialized with a fee rate
+        if Self::is_initialized(env) {
+            let fee_bps = Self::get_protocol_fee_bps(env);
+            if fee_bps > 0 {
+                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
+                let current_accumulated: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::AccumulatedProtocolFees)
+                    .unwrap_or(0);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::AccumulatedProtocolFees, &(current_accumulated + fee));
+            }
+        }
 
         // Clear approvals after successful release
         approvals::clear_approvals(&env, contract_id, milestone_index);
