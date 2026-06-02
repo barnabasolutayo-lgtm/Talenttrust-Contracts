@@ -29,34 +29,16 @@ mod approvals;
 
 pub use types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
+mod types;
+mod ttl;
+mod approvals;
+
+pub use types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
+
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
-
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EscrowError {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    ContractNotFound = 6,
-    EmptyRefundRequest = 7,
-    DuplicateMilestoneInRefund = 8,
-    AlreadyReleased = 9,
-    AlreadyRefunded = 10,
-    InsufficientFunds = 11,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractData {
-    pub client: Address,
-    pub freelancer: Address,
-    pub milestones: Vec<i128>,
-}
 
 #[contractimpl]
 impl Escrow {
@@ -121,7 +103,7 @@ impl Escrow {
 
         for amount in milestones.iter() {
             if amount <= 0 {
-                env.panic_with_error(EscrowError::InvalidMilestoneAmount);
+                env.panic_with_error(Error::InvalidMilestoneAmount);
             }
         }
         if milestone_amounts.is_empty() {
