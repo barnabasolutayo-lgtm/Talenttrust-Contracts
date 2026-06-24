@@ -173,6 +173,7 @@ pub struct GovernedParameters {
 
 // ─── Indexer summary types ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
 
 #[contracttype]

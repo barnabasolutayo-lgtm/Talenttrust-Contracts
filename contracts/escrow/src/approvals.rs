@@ -75,7 +75,7 @@ pub fn approve_milestone(
     // Determine caller role and check authorization
     let is_client = caller == &contract.client;
     let is_freelancer = caller == &contract.freelancer;
-    let is_arbiter = contract.arbiter.as_ref().map_or(false, |a| caller == a);
+    let is_arbiter = contract.arbiter.as_ref() == Some(caller);
 
     // Verify caller is a valid participant
     if !is_client && !is_freelancer && !is_arbiter {
@@ -248,6 +248,8 @@ mod tests {
                 amount: 1000,
                 released: false,
                 refunded: false,
+                funded_amount: 0,
+                refunded_amount: 0,
                 work_evidence: None,
             }],
         );
@@ -296,6 +298,8 @@ mod tests {
                 amount: 1000,
                 released: false,
                 refunded: false,
+                funded_amount: 0,
+                refunded_amount: 0,
                 work_evidence: None,
             }],
         );
@@ -350,6 +354,8 @@ mod tests {
                 amount: 1000,
                 released: false,
                 refunded: false,
+                funded_amount: 0,
+                refunded_amount: 0,
                 work_evidence: None,
             }],
         );

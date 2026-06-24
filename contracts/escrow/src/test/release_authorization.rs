@@ -21,21 +21,17 @@
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 use super::assert_contract_error;
-use crate::{ContractStatus, Escrow, EscrowClient, Error, ReleaseAuthorization};
+use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn setup() -> (Env, EscrowClient<'_>, Address, Address, Address) {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let arbiter_addr = Address::generate(&env);
-    (env, client, client_addr, freelancer_addr, arbiter_addr)
+fn setup(env: &Env) -> (Address, Address, Address) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter_addr = Address::generate(env);
+    (client_addr, freelancer_addr, arbiter_addr)
 }
 
 fn milestones(env: &Env) -> soroban_sdk::Vec<i128> {
@@ -46,8 +42,13 @@ fn total() -> i128 {
     800_0000000_i128
 }
 
+fn new_client(env: &Env) -> EscrowClient<'_> {
+    let contract_id = env.register(Escrow, ());
+    EscrowClient::new(env, &contract_id)
+}
+
 /// Create a funded contract with the given authorization mode.
-/// Returns `(client, client_addr, freelancer_addr, arbiter_addr, contract_id)`.
+/// Returns contract_id.
 fn create(
     env: &Env,
     client: &EscrowClient<'_>,
@@ -56,18 +57,11 @@ fn create(
     arbiter: Option<&Address>,
     auth: &ReleaseAuthorization,
 ) -> u32 {
-    let id = client.create_contract(
-        client_addr,
-        freelancer_addr,
-        &arbiter.copied(),
-        &milestones(env),
-        auth,
-    );
+    let id = client.create_contract(client_addr, freelancer_addr, &None, &milestones(env), auth);
     assert!(client.deposit_funds(&id, client_addr, &total()));
     // Approve milestone 0 so release can go through on happy paths
     match auth {
-        ReleaseAuthorization::ClientOnly
-        | ReleaseAuthorization::ClientAndArbiter => {
+        ReleaseAuthorization::ClientOnly | ReleaseAuthorization::ClientAndArbiter => {
             assert!(client.approve_milestone_release(&id, client_addr, &0));
         }
         ReleaseAuthorization::ArbiterOnly => {
@@ -91,7 +85,10 @@ fn create(
 
 #[test]
 fn client_only_client_can_release() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -107,7 +104,10 @@ fn client_only_client_can_release() {
 
 #[test]
 fn client_only_freelancer_rejected() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -122,7 +122,10 @@ fn client_only_freelancer_rejected() {
 
 #[test]
 fn client_only_arbiter_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -137,7 +140,10 @@ fn client_only_arbiter_rejected() {
 
 #[test]
 fn client_only_attacker_rejected() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -157,7 +163,10 @@ fn client_only_attacker_rejected() {
 
 #[test]
 fn arbiter_only_arbiter_can_release() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -171,7 +180,10 @@ fn arbiter_only_arbiter_can_release() {
 
 #[test]
 fn arbiter_only_client_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -186,7 +198,10 @@ fn arbiter_only_client_rejected() {
 
 #[test]
 fn arbiter_only_freelancer_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -201,7 +216,10 @@ fn arbiter_only_freelancer_rejected() {
 
 #[test]
 fn arbiter_only_attacker_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -221,7 +239,10 @@ fn arbiter_only_attacker_rejected() {
 
 #[test]
 fn client_and_arbiter_client_can_release() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -235,7 +256,10 @@ fn client_and_arbiter_client_can_release() {
 
 #[test]
 fn client_and_arbiter_arbiter_can_release() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -244,15 +268,16 @@ fn client_and_arbiter_arbiter_can_release() {
         Some(&arbiter_addr),
         &ReleaseAuthorization::ClientAndArbiter,
     );
-    // Need arbiter to have approved, which our helper doesn't do for CA mode
-    // — re-approve with arbiter
     assert!(client.approve_milestone_release(&id, &arbiter_addr, &0));
     assert!(client.release_milestone(&id, &arbiter_addr, &0));
 }
 
 #[test]
 fn client_and_arbiter_freelancer_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -267,7 +292,10 @@ fn client_and_arbiter_freelancer_rejected() {
 
 #[test]
 fn client_and_arbiter_attacker_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -287,7 +315,10 @@ fn client_and_arbiter_attacker_rejected() {
 
 #[test]
 fn multisig_client_can_release_with_both_approvals() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -301,7 +332,10 @@ fn multisig_client_can_release_with_both_approvals() {
 
 #[test]
 fn multisig_freelancer_can_release_with_both_approvals() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -315,7 +349,10 @@ fn multisig_freelancer_can_release_with_both_approvals() {
 
 #[test]
 fn multisig_arbiter_rejected() {
-    let (env, client, client_addr, freelancer_addr, arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -330,7 +367,10 @@ fn multisig_arbiter_rejected() {
 
 #[test]
 fn multisig_attacker_rejected() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -348,11 +388,8 @@ fn multisig_attacker_rejected() {
 fn multisig_only_one_approval_insufficient() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
 
     let id = client.create_contract(
         &client_addr,
@@ -377,11 +414,8 @@ fn multisig_only_one_approval_insufficient() {
 fn release_without_approval_fails() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
 
     let id = client.create_contract(
         &client_addr,
@@ -403,9 +437,10 @@ fn release_without_approval_fails() {
 
 #[test]
 fn unauthorized_caller_without_auth_is_rejected() {
-    // Use mock_all_auths to set up the contract, then verify that a
-    // completely unrelated address (not a participant) gets UnauthorizedRole.
-    let (env, client, client_addr, freelancer_addr, _) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -425,7 +460,10 @@ fn unauthorized_caller_without_auth_is_rejected() {
 
 #[test]
 fn fail_closed_on_unauthorized_caller_no_state_change() {
-    let (env, client, client_addr, freelancer_addr, _arbiter_addr) = setup();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, freelancer_addr, _arbiter_addr) = setup(&env);
     let id = create(
         &env,
         &client,
@@ -437,7 +475,6 @@ fn fail_closed_on_unauthorized_caller_no_state_change() {
 
     let before = client.get_contract(&id);
 
-    // Attacker tries to release
     let attacker = Address::generate(&env);
     let result = client.try_release_milestone(&id, &attacker, &0);
     assert_contract_error(result, Error::UnauthorizedRole);

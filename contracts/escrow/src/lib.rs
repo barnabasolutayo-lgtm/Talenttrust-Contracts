@@ -232,6 +232,7 @@ impl Escrow {
     }
 
     /// Advances [`DataKey::NextContractId`] after a contract is persisted.
+    #[allow(dead_code)]
     fn bump_next_contract_id(env: &Env, id: u32) {
         let next_id = id
             .checked_add(1)
@@ -463,7 +464,7 @@ impl Escrow {
             env.panic_with_error(Error::InsufficientFunds);
         }
 
-        let release_amount = milestone.amount;
+        let _release_amount = milestone.amount;
         milestone.released = true;
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;

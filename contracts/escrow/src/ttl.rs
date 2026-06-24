@@ -15,7 +15,9 @@ pub const LEDGERS_PER_DAY: u32 = 17_280;
 pub const PENDING_APPROVAL_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 7;
 pub const PENDING_APPROVAL_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY;
 
+#[allow(dead_code)]
 pub const PENDING_MIGRATION_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 21;
+#[allow(dead_code)]
 pub const PENDING_MIGRATION_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 3;
 
 /// Persistent-storage TTL constants (contract data lives for ~90 days).
