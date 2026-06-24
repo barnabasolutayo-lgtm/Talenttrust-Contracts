@@ -31,10 +31,12 @@ pub fn total_milestone_amount() -> i128 {
     MILESTONE_ONE + MILESTONE_TWO + MILESTONE_THREE
 }
 
+#[allow(dead_code)]
 pub fn total_milestones() -> i128 {
     total_milestone_amount()
 }
 
+#[allow(dead_code)]
 pub fn generated_participants(env: &Env) -> (Address, Address) {
     (Address::generate(env), Address::generate(env))
 }

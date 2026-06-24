@@ -14,7 +14,9 @@ pub const LEDGERS_PER_DAY: u32 = 17_280;
 pub const PENDING_APPROVAL_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 7;
 pub const PENDING_APPROVAL_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY;
 
+#[allow(dead_code)]
 pub const PENDING_MIGRATION_TTL_LEDGERS: u32 = LEDGERS_PER_DAY * 21;
+#[allow(dead_code)]
 pub const PENDING_MIGRATION_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 3;
 
 /// Persistent storage TTL: extend to 30 days, renew when below 7 days.
@@ -77,7 +79,7 @@ where
 
 /// Extend TTL of the NextContractId counter.
 pub fn extend_next_contract_id_ttl(env: &Env) {
-    let _ = env.storage().persistent().extend_ttl(
+    env.storage().persistent().extend_ttl(
         &DataKey::NextContractId,
         PERSISTENT_BUMP_THRESHOLD,
         PERSISTENT_TTL_LEDGERS,
@@ -86,7 +88,7 @@ pub fn extend_next_contract_id_ttl(env: &Env) {
 
 /// Extend TTL of a single contract entry.
 pub fn extend_contract_ttl(env: &Env, contract_id: u32) {
-    let _ = env.storage().persistent().extend_ttl(
+    env.storage().persistent().extend_ttl(
         &DataKey::Contract(contract_id),
         PERSISTENT_BUMP_THRESHOLD,
         PERSISTENT_TTL_LEDGERS,
@@ -96,7 +98,7 @@ pub fn extend_contract_ttl(env: &Env, contract_id: u32) {
 /// Extend TTL of the milestones vector for a given contract.
 pub fn extend_milestone_ttl(env: &Env, contract_id: u32) {
     let milestone_key = Symbol::new(env, "milestones");
-    let _ = env.storage().persistent().extend_ttl(
+    env.storage().persistent().extend_ttl(
         &(DataKey::Contract(contract_id), milestone_key),
         PERSISTENT_BUMP_THRESHOLD,
         PERSISTENT_TTL_LEDGERS,
