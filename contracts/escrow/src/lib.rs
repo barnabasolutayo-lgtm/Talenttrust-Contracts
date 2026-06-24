@@ -498,9 +498,10 @@ impl Escrow {
                     .persistent()
                     .get(&DataKey::AccumulatedProtocolFees)
                     .unwrap_or(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::AccumulatedProtocolFees, &(current_accumulated + fee));
+                env.storage().persistent().set(
+                    &DataKey::AccumulatedProtocolFees,
+                    &(current_accumulated + fee),
+                );
             }
         }
 
@@ -665,10 +666,10 @@ impl Escrow {
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-        
+
         // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
-        
+
         contract
     }
 
@@ -690,10 +691,10 @@ impl Escrow {
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-        
+
         // Extend TTL on milestone read
         ttl::extend_milestone_ttl(&env, contract_id);
-        
+
         milestones
     }
 
