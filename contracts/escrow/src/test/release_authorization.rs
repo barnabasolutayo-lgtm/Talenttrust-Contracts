@@ -22,12 +22,46 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 use super::assert_contract_error;
 use crate::{Error, Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{
+    ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn setup(env: &Env) -> (Address, Address, Address) {
+/// Register the escrow contract and return a client.
+fn register(env: &Env) -> EscrowClient<'_> {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+use super::register_client;
+
+fn create_contract_with_mode(
+    env: &Env,
+    client: &EscrowClient<'_>,
+    client_addr: &Address,
+    freelancer_addr: &Address,
+    arbiter: &Option<Address>,
+    release_auth: &ReleaseAuthorization,
+) -> u32 {
+    let milestones = vec![env, 500_i128, 300_i128];
+    client.create_contract(client_addr, freelancer_addr, arbiter, &milestones, release_auth)
+}
+
+fn fund_contract(env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
+    let milestones = client.get_milestones(contract_id);
+    let total: i128 = milestones.iter().map(|m| m.amount).sum();
+    // Need client_addr - use the contract data
+    let contract = client.get_contract(contract_id);
+    client.deposit_funds(contract_id, &contract.client, &total);
+}
+
+/// Create a fully-funded 2-milestone contract (500 + 300 = 800 total).
+/// Returns `(client_addr, freelancer_addr, contract_id)`.
+fn funded_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u32) {
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let arbiter_addr = Address::generate(env);
@@ -411,6 +445,11 @@ fn multisig_only_one_approval_insufficient() {
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
     let result = client.try_release_milestone(&id, &client_addr, &0);
     assert_contract_error(result, Error::InsufficientApprovals);
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+    client.deposit_funds(&id, &client_addr, &800_i128);
+    (client_addr, freelancer_addr, id)
 }
 
 // ===========================================================================
@@ -489,4 +528,140 @@ fn fail_closed_on_unauthorized_caller_no_state_change() {
     let after = client.get_contract(&id);
     assert_eq!(before.released_amount, after.released_amount);
     assert_eq!(before.status, after.status);
+    assert_contract_error(result, EscrowError::UnauthorizedRole);
+}
+
+// ---------------------------------------------------------------------------
+// Double-release is rejected with AlreadyReleased; no duplicate transfer
+// ---------------------------------------------------------------------------
+
+#[test]
+fn double_release_is_rejected_and_amount_not_duplicated() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register(&env);
+    let (client_addr, _freelancer_addr, id) = funded_contract(&env, &client);
+
+    // First release succeeds.
+    assert!(client.release_milestone(&id, &client_addr, &0));
+
+    // Second release on the same milestone must fail with AlreadyReleased.
+    let result = client.try_release_milestone(&id, &client_addr, &0);
+    assert_contract_error(result, EscrowError::AlreadyReleased);
+
+    // released_amount must not be doubled.
+    let contract = client.get_contract(&id);
+    assert_eq!(contract.released_amount, 500_i128);
+}
+
+// ---------------------------------------------------------------------------
+// Freelancer (non-client) is also rejected
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freelancer_cannot_release_milestone() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register(&env);
+    let (_client_addr, freelancer_addr, id) = funded_contract(&env, &client);
+
+    let result = client.try_release_milestone(&id, &freelancer_addr, &0);
+    assert_contract_error(result, EscrowError::UnauthorizedRole);
+}
+
+#[test]
+fn release_emits_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+
+    let contract_id = create_contract_with_mode(
+        &env,
+        &client,
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    fund_contract(&env, &client, &contract_id);
+
+    // Release milestone
+    client.release_milestone(&contract_id, &client_addr, &0);
+
+    // Check release event was emitted
+    let events = env.events().all();
+    assert!(events.len() > 0);
+
+    // Find the release event
+    let release_event = events.iter().find(|event| {
+        event.0 == soroban_sdk::symbol_short!("milestone_released")
+    });
+    assert!(release_event.is_some());
+}
+
+#[test]
+fn rejects_double_release_and_completes_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+
+    let contract_id = create_contract_with_mode(
+        &env,
+        &client,
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &ReleaseAuthorization::ClientOnly,
+    );
+    fund_contract(&env, &client, &contract_id);
+
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+
+    let result = client.try_release_milestone(&contract_id, &client_addr, &0);
+    assert_contract_error(result, EscrowError::AlreadyReleased);
+
+    assert!(client.release_milestone(&contract_id, &client_addr, &1));
+    assert!(client.release_milestone(&contract_id, &client_addr, &2));
+
+    let contract = client.get_contract(&contract_id);
+    assert_eq!(contract.status, ContractStatus::Completed);
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
+}
+
+#[test]
+fn rejects_refund_after_release_and_release_after_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+
+    let contract_id = create_contract_with_mode(
+        &env,
+        &client,
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &ReleaseAuthorization::ClientOnly,
+    );
+    fund_contract(&env, &client, &contract_id);
+
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+    let refund_ids = vec![&env, 0_u32];
+    let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
+    assert_contract_error(refund_result, EscrowError::AlreadyReleased);
+
+    let refund_ids = vec![&env, 1_u32];
+    assert!(client.refund_unreleased_milestones(&contract_id, &refund_ids));
+
+    let result = client.try_release_milestone(&contract_id, &client_addr, &1);
+    assert_contract_error(result, EscrowError::Refunded);
 }

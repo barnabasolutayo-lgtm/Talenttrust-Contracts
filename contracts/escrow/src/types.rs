@@ -96,84 +96,29 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    InvalidParticipant = 1,
-    EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    UnauthorizedRole = 6,
-    InvalidStatusTransition = 7,
-    AlreadyCancelled = 8,
-    ContractNotFound = 9,
-    MilestoneAlreadyReleased = 10,
-    TooManyMilestones = 11,
-    NotCompleted = 12,
-    InvalidRating = 13,
-    AlreadyFinalized = 14,
-    AlreadyReleased = 15,
-    InsufficientFunds = 16,
-    SelfRating = 17,
-    AmountMustBePositive = 18,
-    InvalidState = 19,
-    AlreadyApproved = 20,
-    ReputationAlreadyIssued = 21,
-    ContractPaused = 22,
-    EmergencyActive = 23,
-    NotInitialized = 24,
-    AlreadyInitialized = 25,
-    FreelancerMismatch = 26,
-    EmptyRefundRequest = 27,
-    DuplicateMilestoneInRefund = 28,
-    MissingArbiter = 29,
-    InvalidArbiter = 30,
-    ContractIdOverflow = 31,
-    ContractIdCollision = 32,
-    IndexOutOfBounds = 33,
-    AlreadyRefunded = 34,
-    InsufficientApprovals = 35,
-    ApprovalExpired = 36,
-    Refunded = 37,
-    InsufficientAccumulatedFees = 38,
-}
-
-/// Alias kept for external test / migration code that references
-/// `EscrowError`.  Will be removed once all callers migrate to `Error`.
-pub type EscrowError = Error;
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct Contract {
-    pub client: soroban_sdk::Address,
-    pub freelancer: soroban_sdk::Address,
-    pub arbiter: Option<soroban_sdk::Address>,
-    pub status: ContractStatus,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-}
-
-/// Defines who can approve milestone releases
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    /// Only client can approve
-    ClientOnly = 0,
-    /// Either client or arbiter can approve
-    ClientAndArbiter = 1,
-    /// Only arbiter can approve
-    ArbiterOnly = 2,
-    /// Both client and freelancer must approve (multi-signature)
-    MultiSig = 3,
-}
-
-/// Tracks approval status for a milestone
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
 }
 
 #[contracttype]
@@ -261,8 +206,53 @@ pub struct ContractSummary {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contract {
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+}
+
+/// Defines who can approve milestone releases.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    /// Only client can approve.
+    ClientOnly = 0,
+    /// Either client or arbiter can approve.
+    ClientAndArbiter = 1,
+    /// Only arbiter can approve.
+    ArbiterOnly = 2,
+    /// Both client and freelancer must approve.
+    MultiSig = 3,
+}
+
+/// Tracks approval status for a milestone.
+/// Stored in temporary storage with TTL for expiry grace period.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
+}
+
+#[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DepositMode {
     ExactTotal = 0,
     Incremental = 1,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct Reputation {
+    pub completed_contracts: i128,
+    pub total_rating: i128,
+    pub last_rating: i128,
 }
