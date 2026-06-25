@@ -67,7 +67,12 @@ impl Escrow {
 
         env.events().publish(
             (symbol_short!("deposit"), contract_id),
-            (caller, amount, contract.funded_amount, env.ledger().timestamp()),
+            (
+                caller,
+                amount,
+                contract.funded_amount,
+                env.ledger().timestamp(),
+            ),
         );
 
         true

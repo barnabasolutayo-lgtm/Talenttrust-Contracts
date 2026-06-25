@@ -117,7 +117,11 @@ impl Escrow {
 
         env.events().publish(
             (symbol_short!("refund"), contract_id),
-            (total_refund_amount, contract.refunded_amount, env.ledger().timestamp()),
+            (
+                total_refund_amount,
+                contract.refunded_amount,
+                env.ledger().timestamp(),
+            ),
         );
 
         total_refund_amount

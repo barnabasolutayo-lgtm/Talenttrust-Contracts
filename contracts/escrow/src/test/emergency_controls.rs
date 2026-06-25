@@ -96,7 +96,7 @@ fn emergency_blocks_create_contract() {
 fn emergency_blocks_deposit_funds() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    let (_client_addr, _, id) = setup_funded_contract(&env, &client);
     client.activate_emergency_pause();
 
     let caller = Address::generate(&env);
@@ -112,7 +112,7 @@ fn emergency_blocks_deposit_funds() {
 fn emergency_blocks_release_milestone() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    let (_client_addr, _, id) = setup_funded_contract(&env, &client);
     client.activate_emergency_pause();
 
     let caller = Address::generate(&env);

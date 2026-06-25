@@ -1,17 +1,14 @@
 #![cfg(test)]
 
-use crate::{
-    types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, EscrowError,
-};
 use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
+use crate::{
+    types::{ContractStatus, DataKey},
+    Contract, EscrowError,
+};
 use soroban_sdk::{
-    testutils::Address as _,
-    testutils::Events,
-    testutils::Ledger as _,
-    testutils::LedgerInfo,
-    Address, Env, IntoVal, Symbol, TryFromVal, Val,
+    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
+    Address, Env, Symbol, TryFromVal, Val,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -42,13 +39,12 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
     Events::all(&env.events()).iter().any(|event| {
         let topics = event.1;
-        if topics.len() == 0 {
+        if topics.is_empty() {
             return false;
         }
         let val = topics.get(0).unwrap();
         // Convert the Val back to Symbol for comparison
-        <Symbol as TryFromVal<Env, Val>>::try_from_val(env, &val)
-            .map_or(false, |s| s == *topic)
+        <Symbol as TryFromVal<Env, Val>>::try_from_val(env, &val).is_ok_and(|s| s == *topic)
     })
 }
 
@@ -126,7 +122,7 @@ fn non_proposed_address_cannot_accept_migration() {
 
     let (client_addr, freelancer_addr, id) = create_contract(&env, &client);
     let new_client = Address::generate(&env);
-    let attacker   = Address::generate(&env);
+    let attacker = Address::generate(&env);
 
     assert!(client.propose_client_migration(&id, &client_addr, &new_client));
 
@@ -164,14 +160,14 @@ fn expired_proposal_cannot_be_accepted() {
     // Set max_entry_ttl high enough so the proposal can be stored without hitting the cap.
     let initial = env.ledger().get();
     env.ledger().set(LedgerInfo {
-        sequence_number:          initial.sequence_number,
-        timestamp:                initial.timestamp,
-        protocol_version:         initial.protocol_version,
-        network_id:               initial.network_id.clone(),
-        base_reserve:             initial.base_reserve,
-        min_temp_entry_ttl:       1,
+        sequence_number: initial.sequence_number,
+        timestamp: initial.timestamp,
+        protocol_version: initial.protocol_version,
+        network_id: initial.network_id.clone(),
+        base_reserve: initial.base_reserve,
+        min_temp_entry_ttl: 1,
         min_persistent_entry_ttl: PENDING_MIGRATION_TTL_LEDGERS * 4,
-        max_entry_ttl:            PENDING_MIGRATION_TTL_LEDGERS * 4,
+        max_entry_ttl: PENDING_MIGRATION_TTL_LEDGERS * 4,
     });
 
     let client = register_client(&env);
@@ -179,19 +175,22 @@ fn expired_proposal_cannot_be_accepted() {
     let new_client = Address::generate(&env);
 
     assert!(client.propose_client_migration(&id, &client_addr, &new_client));
-    assert!(client.has_pending_client_migration(&id), "proposal must exist before expiry");
+    assert!(
+        client.has_pending_client_migration(&id),
+        "proposal must exist before expiry"
+    );
 
     // Advance the ledger past the TTL. Soroban evicts temporary entries beyond max_entry_ttl.
     let current = env.ledger().get();
     env.ledger().set(LedgerInfo {
-        sequence_number:  current.sequence_number + PENDING_MIGRATION_TTL_LEDGERS + 1,
-        timestamp:        current.timestamp + u64::from(PENDING_MIGRATION_TTL_LEDGERS) * 5,
+        sequence_number: current.sequence_number + PENDING_MIGRATION_TTL_LEDGERS + 1,
+        timestamp: current.timestamp + u64::from(PENDING_MIGRATION_TTL_LEDGERS) * 5,
         protocol_version: current.protocol_version,
-        network_id:       [0u8; 32].into(),
-        base_reserve:     current.base_reserve,
-        min_temp_entry_ttl:       1,
+        network_id: [0u8; 32].into(),
+        base_reserve: current.base_reserve,
+        min_temp_entry_ttl: 1,
         min_persistent_entry_ttl: 1,
-        max_entry_ttl:            65_536,
+        max_entry_ttl: 65_536,
     });
 
     // has_pending returns false — entry is evicted
@@ -211,8 +210,8 @@ fn expired_proposal_cannot_be_accepted() {
 // Test 4 – migration blocked on all four terminal statuses
 // ---------------------------------------------------------------------------
 
-/// `require_migration_allowed` in migration.rs blocks proposals when the
-/// escrow is in a terminal state.  All four terminal states are tested.
+// `require_migration_allowed` in migration.rs blocks proposals when the
+// escrow is in a terminal state.  All four terminal states are tested.
 
 /// Completed contract blocks proposal.
 #[test]
@@ -346,7 +345,7 @@ fn only_current_client_may_propose_migration() {
 
     let (_client_addr, freelancer_addr, id) = create_contract(&env, &client);
     let new_client = Address::generate(&env);
-    let attacker   = Address::generate(&env);
+    let attacker = Address::generate(&env);
 
     // Freelancer as proposer is rejected
     assert_contract_error(
@@ -439,7 +438,10 @@ fn migration_allowed_on_partially_funded_status() {
 
     // Deposit less than the full milestone total → PartiallyFunded
     client.deposit_funds(&id, &client_addr, &super::MILESTONE_ONE);
-    assert_eq!(client.get_contract(&id).status, ContractStatus::PartiallyFunded);
+    assert_eq!(
+        client.get_contract(&id).status,
+        ContractStatus::PartiallyFunded
+    );
 
     let new_client = Address::generate(&env);
     assert!(client.propose_client_migration(&id, &client_addr, &new_client));
@@ -486,8 +488,7 @@ fn pending_migration_expiry_matches_ttl_constant() {
         "expires_at_ledger must equal requested_at + PENDING_MIGRATION_TTL_LEDGERS"
     );
     assert_eq!(
-        pending.requested_at_ledger,
-        ledger_before,
+        pending.requested_at_ledger, ledger_before,
         "requested_at_ledger must equal the ledger at proposal time"
     );
 }

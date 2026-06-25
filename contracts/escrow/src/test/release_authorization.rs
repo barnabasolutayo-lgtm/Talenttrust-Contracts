@@ -18,7 +18,7 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, TryFromVal, Val};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 use super::register_client;
 use crate::{ContractStatus, Error, Escrow, EscrowClient, ReleaseAuthorization};
@@ -38,14 +38,14 @@ fn setup(env: &Env) -> (Address, Address, Address) {
 fn register(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
     EscrowClient::new(env, &id)
-}fn assert_contract_error<T, E>(
+}
+fn assert_contract_error<T, E>(
     result: Result<
         Result<T, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
     expected: E,
-)
-where
+) where
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 {
     match result {
@@ -67,8 +67,7 @@ fn assert_contract_error_i128<E>(
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
     expected: E,
-)
-where
+) where
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 {
     match result {
@@ -101,7 +100,7 @@ fn create_contract_with_mode(
     )
 }
 
-fn fund_contract(env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
+fn fund_contract(_env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
     let milestones = client.get_milestones(contract_id);
     let total: i128 = milestones.iter().map(|m| m.amount).sum();
     let contract = client.get_contract(contract_id);
@@ -710,19 +709,19 @@ fn release_emits_events() {
 
     // Check release event was emitted
     let events = soroban_sdk::testutils::Events::all(&env.events());
-    assert!(events.len() > 0);
+    assert!(!events.is_empty());
 
     // Find the release event (first topic is Symbol at topics[0])
     let release_event = events
         .iter()
         .find(|event| {
             let topics = &event.1;
-            if topics.len() == 0 {
+            if topics.is_empty() {
                 return false;
             }
             let val = topics.get(0).unwrap();
             <soroban_sdk::Symbol as soroban_sdk::TryFromVal<soroban_sdk::Env, soroban_sdk::Val>>::try_from_val(&env, &val)
-                .map_or(false, |s| s == soroban_sdk::Symbol::new(&env, "milestone_released"))
+                .is_ok_and(|s| s == soroban_sdk::Symbol::new(&env, "milestone_released"))
         });
     assert!(release_event.is_some());
 }

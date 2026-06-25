@@ -101,7 +101,7 @@ fn pause_blocks_create_contract() {
 fn pause_blocks_deposit_funds() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    let (_client_addr, _, id) = setup_funded_contract(&env, &client);
     client.pause();
 
     let caller = Address::generate(&env);
@@ -117,7 +117,7 @@ fn pause_blocks_deposit_funds() {
 fn pause_blocks_release_milestone() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    let (_client_addr, _, id) = setup_funded_contract(&env, &client);
     client.pause();
 
     let caller = Address::generate(&env);
