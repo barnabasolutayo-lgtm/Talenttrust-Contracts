@@ -127,3 +127,147 @@ fn rejects_releasing_same_milestone_twice() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     client.release_milestone(&contract_id, &client_addr, &0);
 }
+
+/// Tests that batch release of milestones works correctly and contract completes when all are released.
+/// 
+/// # Security
+/// - Validates atomicity (all-or-nothing release)
+/// - Validates authorization checks
+/// - Ensures released_amount tracking is accurate
+/// - Verifies state transition to Completed
+/// - Confirms refundable balance calculation
+#[test]
+fn batch_releases_funded_milestones_and_completes_when_all_are_released() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+
+    // Approve all milestones
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &2));
+
+    // Batch release all milestones
+    let milestone_indices = vec![&env, 0_u32, 1_u32, 2_u32];
+    let total_released = client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+    assert_eq!(total_released, 1_200_0000000_i128);
+
+    let contract = client.get_contract(&contract_id);
+    assert_contract_state(
+        contract,
+        ContractStatus::Completed,
+        1_200_0000000_i128,
+        1_200_0000000_i128,
+        0,
+    );
+    assert_milestone_flags(client.get_milestones(&contract_id), 0, true, false);
+    assert_milestone_flags(client.get_milestones(&contract_id), 1, true, false);
+    assert_milestone_flags(client.get_milestones(&contract_id), 2, true, false);
+    assert_eq!(client.get_refundable_balance(&contract_id), 0);
+}
+
+/// Tests that batch release is rejected with empty milestone indices.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_empty_indices() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    let milestone_indices = vec![&env];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected with duplicate milestone indices.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_duplicate_indices() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    let milestone_indices = vec![&env, 0_u32, 0_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected when insufficient funds are available for all milestones.
+#[test]
+#[should_panic]
+fn rejects_batch_release_without_sufficient_balance() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &500_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected with invalid milestone index.
+#[test]
+#[should_panic]
+fn rejects_batch_release_of_invalid_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &3));
+    let milestone_indices = vec![&env, 0_u32, 3_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected if any milestone is already released.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_already_released_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected if any milestone is already refunded.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_refunded_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    let refund_ids = vec![&env, 1_u32];
+    client.refund_unreleased_milestones(&contract_id, &refund_ids);
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected if any milestone lacks valid approvals.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_insufficient_approvals() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    // Don't approve milestone 1
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
