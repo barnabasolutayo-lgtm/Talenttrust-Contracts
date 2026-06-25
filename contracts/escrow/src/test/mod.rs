@@ -3,16 +3,16 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
+mod client_migration;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
-mod reputation;
 mod release_authorization;
-mod client_migration;
+mod reputation;
 
 // --- Shared constants ---
 
@@ -147,7 +147,7 @@ pub fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Cont
     use crate::{Contract as EscrowContract, DataKey};
     env.as_contract(escrow_addr, || {
         let key = DataKey::Contract(id);
-        let mut contract: EscrowContract = env.storage().persistent().get(&key).unwrap();
+        let _contract: EscrowContract = env.storage().persistent().get(&key).unwrap();
         let mut contract: crate::Contract = env.storage().persistent().get(&key).unwrap();
         contract.status = status;
         env.storage().persistent().set(&key, &contract);

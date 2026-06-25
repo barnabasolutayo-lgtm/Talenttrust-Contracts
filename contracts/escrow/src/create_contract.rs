@@ -66,7 +66,7 @@ impl Escrow {
             }
         }
 
-        let id = next_contract_id(&env);
+        let _id = next_contract_id(&env);
 
         ttl::extend_next_contract_id_ttl(&env);
 
