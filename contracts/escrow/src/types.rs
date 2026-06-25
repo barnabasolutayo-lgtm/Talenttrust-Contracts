@@ -71,6 +71,9 @@ pub enum DataKey {
     NextContractId,
     MilestoneReleased(u32, u32),
     MilestoneApprovals(u32, u32),
+    // Participant indexer (append-only contract id lists)
+    ClientContracts(Address),
+    FreelancerContracts(Address),
     // Reputation
     ReputationIssued(u32),
     PendingReputationCredits(Address),
@@ -90,6 +93,7 @@ pub enum DataKey {
     // Finalization
     Finalization(u32),
 }
+
 
 /// Canonical contract error type for all entrypoint-facing errors.
 #[contracterror]

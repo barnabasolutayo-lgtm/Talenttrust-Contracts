@@ -1,11 +1,13 @@
-use super::{create_contract, register_client, total_milestone_amount};
+use super::{create_contract, register_client, total_milestone_amount, generated_participants, default_milestones};
 use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
 #[test]
 fn finalize_completed_contract_persists_immutable_close_record() {
     let env = Env::default();
+
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
@@ -299,6 +301,7 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     env.mock_all_auths();
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+
 
     assert!(client.deposit_funds(
         &contract_id,
