@@ -760,7 +760,6 @@ fn rejects_refund_after_release_and_release_after_refund() {
     assert_contract_error(result, Error::AlreadyRefunded);
 }
 
-#![cfg(test)]
 use soroban_sdk::{testutils::Address as _, Env, Address};
 use crate::{EscrowContract, EscrowContractClient, types::Error};
 
