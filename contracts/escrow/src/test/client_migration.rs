@@ -41,7 +41,7 @@ fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
     let topic_val: Val = topic.into_val(env);
     env.events().all().iter().any(|event| {
         let topics = event.1;
-        topics.len() > 0 && topics.get(0).unwrap() == topic_val
+        topics.len() > 0 && topics.get(0).unwrap().get_payload() == topic_val.get_payload()
     })
 }
 

@@ -100,7 +100,7 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 10_i128];
-    let created = client.create_contract(
+    let _created = client.create_contract(
         &client_addr,
         &freelancer_addr,
         &None,
@@ -115,7 +115,7 @@ fn finalize_allows_freelancer_finalizer() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
+    let (_client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
     assert!(client.finalize_contract(&contract_id, &freelancer_addr));
 

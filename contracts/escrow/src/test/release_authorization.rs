@@ -79,7 +79,7 @@ fn create_contract_with_mode(
     )
 }
 
-fn fund_contract(env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
+fn fund_contract(_env: &Env, client: &EscrowClient<'_>, contract_id: &u32) {
     let milestones = client.get_milestones(contract_id);
     let total: i128 = milestones.iter().map(|m| m.amount).sum();
     let contract = client.get_contract(contract_id);
