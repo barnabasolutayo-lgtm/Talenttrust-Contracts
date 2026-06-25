@@ -28,19 +28,22 @@ mod create_contract;
 mod deposit;
 mod finalize;
 mod governance;
+mod migration;
 mod refund;
 mod release;
 mod ttl;
 mod types;
 
 pub use migration::PendingClientMigration;
-pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
+pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization, Reputation,
+    Contract, ContractStatus, CONTRACT_SUMMARY_SCHEMA_VERSION, ContractSummary, DataKey,
+    DepositMode, Error, GovernedParameters, MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS,
+    MAINNET_PROTOCOL_VERSION, Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal,
+    ReadinessChecklist, ReleaseAuthorization, Reputation,
 };
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracterror, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
@@ -72,14 +75,12 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractData {
-    pub client: Address,
-    pub freelancer: Address,
-    pub milestones: Vec<i128>,
+    AlreadyFinalized = 25,
+    InvalidProtocolParameters = 26,
+    GovernanceNotInitialized = 27,
+    PotentialOverflow = 28,
+    AccountingInvariantViolated = 29,
+    TimelockNotElapsed = 30,
 }
 
 #[contractimpl]
@@ -131,11 +132,21 @@ impl Escrow {
     }
 
     /// Returns the current mainnet readiness checklist.
+    ///
+    /// Read-only and requires no authorization. The `caps_set`, `protocol_version`,
+    /// and `max_escrow_total_stroops` fields are always populated from compile-time
+    /// constants regardless of storage state.
     pub fn get_mainnet_readiness_info(env: Env) -> ReadinessChecklist {
-        env.storage()
+        let mut checklist: ReadinessChecklist = env
+            .storage()
             .persistent()
             .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Always reflect compile-time constants, never rely on stored values for these.
+        checklist.caps_set = MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS > 0;
+        checklist.protocol_version = MAINNET_PROTOCOL_VERSION;
+        checklist.max_escrow_total_stroops = MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS;
+        checklist
     }
 
     /// Approves a milestone for release.
@@ -175,329 +186,18 @@ impl Escrow {
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
 
-    /// Releases a specific milestone, transferring funds to the freelancer.
-    ///
-    /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
-    ///
-    /// MultiSig semantics are client-and-freelancer approval. A MultiSig
-    /// milestone can be released only by the stored client or freelancer after
-    /// both of those addresses have approved the same milestone.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `caller` - The address of the caller (must be authorized)
-    /// * `milestone_index` - The index of the milestone to release
-    ///
-    /// # Returns
-    /// `true` if release was successful
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Funded state
-    /// * `InvalidMilestone` - If milestone index is out of bounds
-    /// * `AlreadyReleased` - If milestone was already released
-    /// * `AlreadyRefunded` - If milestone was already refunded
-    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
-    /// * `InsufficientApprovals` - If required approvals are missing
-    /// * `ApprovalExpired` - If approvals have expired
-    /// * `UnauthorizedRole` - If caller is not authorized to release
-    ///
-    /// # Security
-    /// - Requires valid approvals that haven't expired
-    /// - Approvals are cleared after successful release
-    /// - Fail-closed: missing or expired approvals prevent release
-    pub fn release_milestone(
-        env: Env,
-        contract_id: u32,
-        caller: Address,
-        milestone_index: u32,
-    ) -> bool {
-        // Authenticate caller before any state-dependent logic
-        caller.require_auth();
-
-        let mut contract: Contract = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        // Extend TTL on contract read
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        Self::require_not_finalized(&env, contract_id);
-
-        // Verify contract is in Funded state
-        if contract.status != ContractStatus::Funded {
-            env.panic_with_error(Error::InvalidState);
-        }
-
-        // Check caller is authorized for this release authorization mode
-        let is_client = caller == contract.client;
-        let is_freelancer = caller == contract.freelancer;
-        let is_arbiter = contract.arbiter.as_ref() == Some(&caller);
-
-        match contract.release_authorization {
-            ReleaseAuthorization::ClientOnly => {
-                if !is_client {
-                    env.panic_with_error(Error::UnauthorizedRole);
-                }
-            }
-            ReleaseAuthorization::ArbiterOnly => {
-                if !is_arbiter {
-                    env.panic_with_error(Error::UnauthorizedRole);
-                }
-            }
-            ReleaseAuthorization::ClientAndArbiter => {
-                if !is_client && !is_arbiter {
-                    env.panic_with_error(Error::UnauthorizedRole);
-                }
-            }
-            ReleaseAuthorization::MultiSig => {
-                if !is_client && !is_freelancer {
-                    env.panic_with_error(Error::UnauthorizedRole);
-                }
-            }
-        }
-
-        // Check for valid approvals
-        approvals::check_approvals(&env, &contract, contract_id, milestone_index)
-            .unwrap_or_else(|e| env.panic_with_error(e));
-
-        let milestone_key = Symbol::new(&env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        // Extend TTL on milestone read
-        ttl::extend_milestone_ttl(&env, contract_id);
-
-        if milestone_index >= milestones.len() {
-            env.panic_with_error(Error::IndexOutOfBounds);
-        }
-
-        let mut milestone = milestones.get(milestone_index).unwrap().clone();
-
-        if milestone.released {
-            env.panic_with_error(Error::MilestoneAlreadyReleased);
-        }
-
-        if milestone.refunded {
-            env.panic_with_error(Error::AlreadyRefunded);
-        }
-
-        // Check if there's enough balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
-        if available_balance < milestone.amount {
-            env.panic_with_error(Error::InsufficientFunds);
-        }
-
-        let _release_amount = milestone.amount;
-        milestone.released = true;
-        milestones.set(milestone_index, milestone.clone());
-        contract.released_amount += milestone.amount;
-
-        // Accumulate protocol fees if initialized with a fee rate
-        if Self::is_initialized(&env) {
-            let fee_bps = Self::get_protocol_fee_bps(&env);
-            if fee_bps > 0 {
-                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
-                let current_accumulated: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::AccumulatedProtocolFees)
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
-                );
-            }
-        }
-
-        // Clear approvals after successful release
-        approvals::clear_approvals(&env, contract_id, milestone_index);
-
-        // Check if all milestones are released
-        let all_released = milestones.iter().all(|m| m.released || m.refunded);
-        if all_released {
-            contract.status = ContractStatus::Completed;
-        }
-
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
-
-        // Extend TTL on contract and milestone writes
-        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
-
-        true
-    }
-
-    /// Refunds unreleased milestones back to the client.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `milestone_indices` - Vector of milestone indices to refund
-    ///
-    /// # Returns
-    /// The total amount refunded
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `EmptyRefundRequest` - If milestone_indices is empty
-    /// * `DuplicateMilestoneInRefund` - If the same milestone appears multiple times
-    /// * `IndexOutOfBounds` - If any milestone index is out of bounds
-    /// * `AlreadyReleased` - If any milestone was already released
-    /// * `AlreadyRefunded` - If any milestone was already refunded
-    /// * `InsufficientFunds` - If contract doesn't have enough balance to refund
-    pub fn refund_unreleased_milestones(
-        env: Env,
-        contract_id: u32,
-        milestone_indices: Vec<u32>,
-    ) -> i128 {
-        // Validate non-empty request
-        if milestone_indices.is_empty() {
-            env.panic_with_error(Error::EmptyRefundRequest);
-        }
-
-        // Check for duplicates
-        for i in 0..milestone_indices.len() {
-            for j in (i + 1)..milestone_indices.len() {
-                if milestone_indices.get(i).unwrap() == milestone_indices.get(j).unwrap() {
-                    env.panic_with_error(Error::DuplicateMilestoneInRefund);
-                }
-            }
-        }
-
-        let mut contract: Contract = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        // Extend TTL on contract read
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        Self::require_not_finalized(&env, contract_id);
-
-        contract.client.require_auth();
-
-        let milestone_key = Symbol::new(&env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        // Extend TTL on milestone read
-        ttl::extend_milestone_ttl(&env, contract_id);
-
-        let mut total_refund_amount: i128 = 0;
-
-        // Validate all milestones first
-        for idx in milestone_indices.iter() {
-            if idx >= milestones.len() {
-                env.panic_with_error(Error::IndexOutOfBounds);
-            }
-
-            let milestone = milestones.get(idx).unwrap();
-
-            if milestone.released {
-                env.panic_with_error(Error::AlreadyReleased);
-            }
-
-            if milestone.refunded {
-                env.panic_with_error(Error::AlreadyRefunded);
-            }
-
-            total_refund_amount += milestone.amount;
-        }
-
-        // Check if there's enough balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
-        if available_balance < total_refund_amount {
-            env.panic_with_error(Error::InsufficientFunds);
-        }
-
-        // Mark milestones as refunded
-        for idx in milestone_indices.iter() {
-            let mut milestone = milestones.get(idx).unwrap();
-            milestone.refunded = true;
-            milestones.set(idx, milestone);
-        }
-
-        contract.refunded_amount += total_refund_amount;
-
-        // Check if all unreleased milestones are refunded
-        let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
-        if all_refunded_or_released {
-            let all_refunded = milestones.iter().all(|m| m.refunded);
-            if all_refunded {
-                contract.status = ContractStatus::Refunded;
-            } else {
-                // Some released, some refunded
-                contract.status = ContractStatus::Completed;
-            }
-        }
-
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
-
-        // Extend TTL on contract and milestone writes
-        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
-
-        total_refund_amount
-    }
-
     /// Retrieves contract information.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    ///
-    /// # Returns
-    /// The contract data
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_contract(env: Env, contract_id: u32) -> Contract {
         let contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
-
         contract
     }
 
     /// Retrieves all milestones for a contract.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    ///
-    /// # Returns
-    /// Vector of milestones
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_milestones(env: Env, contract_id: u32) -> Vec<Milestone> {
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones = env
@@ -505,39 +205,22 @@ impl Escrow {
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        // Extend TTL on milestone read
         ttl::extend_milestone_ttl(&env, contract_id);
-
         milestones
     }
 
-    /// Calculates the refundable balance (funded but not released or refunded).
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    ///
-    /// # Returns
-    /// The refundable balance amount
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
+    /// Returns funded minus released minus refunded for `contract_id`.
     pub fn get_refundable_balance(env: Env, contract_id: u32) -> i128 {
         let contract: Contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
-
         contract.funded_amount - contract.released_amount - contract.refunded_amount
     }
 
     /// Retrieves approval status for a milestone.
-    ///
     /// Returns None if approvals have expired or don't exist.
     ///
     /// # Arguments
@@ -596,9 +279,15 @@ impl Escrow {
     // -----------------------------------------------------------------------
 
     pub fn activate_emergency_pause(env: Env) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+            admin.require_auth();
+        }
         env.storage().persistent().set(&DataKey::Emergency, &true);
         env.storage().persistent().set(&DataKey::Paused, &true);
         let mut checklist: ReadinessChecklist = env
@@ -614,11 +303,26 @@ impl Escrow {
     }
 
     pub fn resolve_emergency(env: Env) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+            admin.require_auth();
+        }
         env.storage().persistent().set(&DataKey::Emergency, &false);
         env.storage().persistent().set(&DataKey::Paused, &false);
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.emergency_controls_enabled = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
         true
     }
 
@@ -768,6 +472,83 @@ impl Escrow {
     }
 
     // -----------------------------------------------------------------------
+    // Governed parameters
+    // -----------------------------------------------------------------------
+
+    /// Sets protocol fee (basis points) and maximum escrow total per contract.
+    ///
+    /// Requires initialization. Only the stored admin may call this.
+    /// `fee_bps` must be ≤ 10 000; `max_escrow_total_stroops` must be > 0.
+    /// Sets `governed_params_set` in the readiness checklist on success.
+    pub fn set_governed_params(
+        env: Env,
+        caller: Address,
+        fee_bps: u32,
+        max_escrow_total_stroops: i128,
+    ) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        if caller != admin {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        caller.require_auth();
+        if fee_bps > 10_000 || max_escrow_total_stroops <= 0 {
+            env.panic_with_error(EscrowError::InvalidProtocolParameters);
+        }
+        let params = GovernedParameters { protocol_fee_bps: fee_bps, max_escrow_total_stroops };
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernedParameters, &params);
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.governed_params_set = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+        true
+    }
+
+    /// Returns the current governed parameters, if set.
+    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GovernedParameters)
+    }
+
+    // -----------------------------------------------------------------------
+    // Governance: treasury rotation with timelock
+    // -----------------------------------------------------------------------
+
+    /// Propose a new admin. Stores the pending admin proposal (with the
+    /// current ledger sequence for timelock enforcement) and emits an event.
+    ///
+    /// Requires initialization; current admin must authorize.
+    pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
+        Self::propose_governance_admin_impl(env, proposed)
+    }
+
+    /// Accept a pending admin proposal. The proposed admin must authorize.
+    ///
+    /// Fails with `TimelockNotElapsed` if fewer than
+    /// `ADMIN_ROTATION_MIN_DELAY_LEDGERS` have elapsed since the proposal.
+    pub fn accept_governance_admin(env: Env) -> bool {
+        Self::accept_governance_admin_impl(env)
+    }
+
+    /// Return the currently pending admin address, if any.
+    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
+        Self::get_pending_governance_admin_impl(env)
+    }
+
+    /// Return the current admin address.
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        Self::get_governance_admin_impl(env)
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
@@ -781,6 +562,11 @@ impl Escrow {
             env.panic_with_error(EscrowError::NotInitialized);
         }
     }
+}
+
+/// Subtracts `b` from `a`, returning `None` if the result would underflow.
+pub fn safe_subtract_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_sub(b)
 }
 
 #[cfg(test)]
