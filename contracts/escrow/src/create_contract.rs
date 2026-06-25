@@ -37,7 +37,7 @@ impl Escrow {
         client.require_auth();
 
         if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipant);
+            env.panic_with_error(Error::InvalidParticipants);
         }
 
         match release_authorization {
@@ -68,8 +68,6 @@ impl Escrow {
         let id = next_contract_id(&env);
 
         ttl::extend_next_contract_id_ttl(&env);
-
-        let id = next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {

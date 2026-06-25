@@ -31,8 +31,6 @@ mod dispute;
 mod finalize;
 mod governance;
 mod migration;
-mod refund;
-mod release;
 mod ttl;
 mod types;
 
@@ -49,7 +47,9 @@ pub use types::{
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
@@ -86,12 +86,7 @@ pub enum EscrowError {
     AccountingInvariantViolated = 27,
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
-}
-
-impl From<EscrowError> for soroban_sdk::Error {
-    fn from(e: EscrowError) -> Self {
-        soroban_sdk::Error::from_contract_error(e as u32)
-    }
+    AmountMustBePositive = 30,
 }
 
 #[contracttype]
@@ -771,6 +766,28 @@ impl Escrow {
         {
             env.panic_with_error(EscrowError::NotInitialized);
         }
+    }
+
+    fn is_initialized(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+    }
+
+    fn get_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
+        let fee_bps_i128 = fee_bps as i128;
+        amount
+            .checked_mul(fee_bps_i128)
+            .and_then(|v| v.checked_div(10000))
+            .unwrap_or(0)
     }
 
     // -----------------------------------------------------------------------
