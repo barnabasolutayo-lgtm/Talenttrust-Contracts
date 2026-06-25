@@ -742,7 +742,10 @@ fn rejects_refund_after_release_and_release_after_refund() {
     let refund_ids = vec![&env, 0_u32];
     let refund_result = client.try_refund_unreleased_milestones(&contract_id, &refund_ids);
     let err = refund_result.expect_err("expected AlreadyReleased panic");
-    assert_eq!(err.expect("expected Error"), soroban_sdk::Error::from(Error::AlreadyReleased));
+    assert_eq!(
+        err.expect("expected Error"),
+        soroban_sdk::Error::from(Error::AlreadyReleased)
+    );
 
     let refund_ids = vec![&env, 1_u32];
     assert!(client.refund_unreleased_milestones(&contract_id, &refund_ids) > 0);

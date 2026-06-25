@@ -326,7 +326,10 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
         .get_finalization_record(&contract_id)
         .expect("finalization record should exist");
     assert_eq!(record.summary.status, ContractStatus::Completed);
-    assert_eq!(record.summary.released_amount, super::MILESTONE_ONE + super::MILESTONE_TWO);
+    assert_eq!(
+        record.summary.released_amount,
+        super::MILESTONE_ONE + super::MILESTONE_TWO
+    );
     assert_eq!(record.summary.refundable_balance, 0);
     assert_eq!(record.summary.released_milestone_count, 2);
 }
