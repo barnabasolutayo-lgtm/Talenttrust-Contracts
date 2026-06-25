@@ -41,7 +41,7 @@ fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
     let topic_val: Val = topic.into_val(env);
     env.events().all().iter().any(|event| {
         let topics = event.1;
-        topics.len() > 0 && topics.get(0).unwrap().get_payload() == topic_val.get_payload()
+        !topics.is_empty() && topics.get(0).unwrap().get_payload() == topic_val.get_payload()
     })
 }
 
@@ -209,7 +209,6 @@ fn expired_proposal_cannot_be_accepted() {
 
 /// `require_migration_allowed` in migration.rs blocks proposals when the
 /// escrow is in a terminal state.  All four terminal states are tested.
-
 /// Completed contract blocks proposal.
 #[test]
 fn migration_blocked_on_completed_contract() {
