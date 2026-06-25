@@ -17,21 +17,7 @@ pub const MAX_SINGLE_AMOUNT_STROOPS: i128 = 1_000_000_0000000; // 1M tokens
 #[allow(dead_code)] // available for callers; not used internally
 pub const MIN_POSITIVE_AMOUNT: i128 = 1;
 
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum AmountValidationError {
-    /// Amount must be positive (greater than 0)
-    NonPositiveAmount = 1000,
-    /// Amount exceeds maximum allowed per operation
-    AmountExceedsMaximum = 1001,
-    /// Amount would cause overflow in calculations
-    PotentialOverflow = 1002,
-    /// Invalid stroop precision (amount must be multiple of 1 stroop)
-    InvalidStroopPrecision = 1003,
-    /// Total amount exceeds contract maximum
-    ExceedsContractMaximum = 1004,
-}
+// Removed the redundant AmountValidationError enum. Errors are now represented by the canonical `Error` enum from `crate::Error`.
 
 /// Validates a single amount for positivity and bounds
 ///
@@ -41,15 +27,16 @@ pub enum AmountValidationError {
 /// # Returns
 /// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
 #[allow(dead_code)] // available for callers; not used by the contract directly
-pub fn validate_single_amount(amount: i128) -> Result<(), AmountValidationError> {
+pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
-        return Err(AmountValidationError::NonPositiveAmount);
+        return Err(crate::EscrowError::AmountMustBePositive);
     }
 
     // Check maximum bounds
     if amount > MAX_SINGLE_AMOUNT_STROOPS {
-        return Err(AmountValidationError::AmountExceedsMaximum);
+        // No direct canonical error; map to InvalidMilestoneAmount for generic excess amount
+        return Err(crate::EscrowError::InvalidMilestoneAmount);
     }
 
     // Check stroop precision (must be integer, which i128 already guarantees)
@@ -67,7 +54,7 @@ pub fn validate_single_amount(amount: i128) -> Result<(), AmountValidationError>
 /// # Returns
 /// `Ok(total)` with sum of all amounts if valid, `Err(AmountValidationError)` if invalid
 #[allow(dead_code)] // available for callers; not used by the contract directly
-pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, AmountValidationError> {
+pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowError> {
     let mut total: i128 = 0;
 
     for &amount in amounts.iter() {
@@ -78,7 +65,7 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, AmountValidationE
         if let Some(new_total) = total.checked_add(amount) {
             total = new_total;
         } else {
-            return Err(AmountValidationError::PotentialOverflow);
+            return Err(crate::EscrowError::PotentialOverflow);
         }
     }
 
@@ -97,9 +84,10 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, AmountValidationE
 pub fn validate_contract_total(
     total_amount: i128,
     max_contract_total: i128,
-) -> Result<(), AmountValidationError> {
+) -> Result<(), crate::EscrowError> {
     if total_amount > max_contract_total {
-        return Err(AmountValidationError::ExceedsContractMaximum);
+        // Map to InvalidMilestoneAmount for contract total overflow
+        return Err(crate::EscrowError::InvalidMilestoneAmount);
     }
     Ok(())
 }
@@ -116,7 +104,7 @@ pub fn validate_contract_total(
 pub fn validate_milestone_amounts(
     milestone_amounts: &[i128],
     max_contract_total: i128,
-) -> Result<i128, AmountValidationError> {
+) -> Result<i128, crate::EscrowError> {
     // Validate each milestone amount and calculate total
     let total = validate_amount_array(milestone_amounts)?;
 
@@ -140,17 +128,17 @@ pub fn validate_deposit_amount(
     deposit_amount: i128,
     current_deposited: i128,
     max_contract_total: i128,
-) -> Result<(), AmountValidationError> {
+) -> Result<(), crate::EscrowError> {
     // Validate deposit amount itself
     validate_single_amount(deposit_amount)?;
 
     // Check if deposit would exceed contract maximum
     if let Some(new_total) = current_deposited.checked_add(deposit_amount) {
         if new_total > max_contract_total {
-            return Err(AmountValidationError::ExceedsContractMaximum);
+            return Err(crate::EscrowError::InvalidMilestoneAmount);
         }
     } else {
-        return Err(AmountValidationError::PotentialOverflow);
+        return Err(crate::EscrowError::PotentialOverflow);
     }
 
     Ok(())
