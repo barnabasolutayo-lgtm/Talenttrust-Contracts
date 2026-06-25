@@ -23,22 +23,23 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
 mod finalize;
 mod governance;
 mod migration;
-mod refund;
-mod release;
 mod ttl;
 mod types;
 
+pub use amount_validation::safe_subtract_amounts;
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization, Reputation,
+    Contract, ContractStatus, ContractSummary, DataKey, Error, Milestone, MilestoneApprovals,
+    MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 use soroban_sdk::{
@@ -851,18 +852,6 @@ impl Escrow {
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
-
-    fn require_not_finalized(env: &Env, contract_id: u32) {
-        let finalized = env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Finalized(contract_id))
-            .unwrap_or(false);
-
-        if finalized {
-            env.panic_with_error(EscrowError::AlreadyFinalized);
-        }
-    }
 
     fn require_initialized(env: &Env) {
         if !env
