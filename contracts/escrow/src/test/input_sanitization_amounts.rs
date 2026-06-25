@@ -4,9 +4,9 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError, MAX_TOTAL_ESCROW_STROOPS,
+use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization, MAX_TOTAL_ESCROW_STROOPS,
     validate_single_amount, validate_milestone_amounts, validate_deposit_amount,
-    safe_add_amounts, safe_subtract_amounts, AmountValidationError};
+    safe_add_amounts, safe_subtract_amounts};
 
 fn setup() -> (Env, EscrowClient, Address, Address) {
     let env = Env::default();
@@ -22,7 +22,7 @@ fn setup() -> (Env, EscrowClient, Address, Address) {
 fn test_create_contract_panics_when_single_milestone_is_zero() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 0_i128];
-    client.create_contract(&hiring_party, &service_provider, &milestones);
+    client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn test_create_contract_panics_when_single_milestone_is_zero() {
 fn test_create_contract_panics_when_single_milestone_is_negative() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, -1_i128];
-    client.create_contract(&hiring_party, &service_provider, &milestones);
+    client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 }
 
 #[test]
@@ -38,14 +38,14 @@ fn test_create_contract_panics_when_single_milestone_is_negative() {
 fn test_create_contract_panics_when_any_milestone_is_non_positive() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 100_0000000_i128, 0_i128, 200_0000000_i128];
-    client.create_contract(&hiring_party, &service_provider, &milestones);
+    client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 }
 
 #[test]
 fn test_create_contract_accepts_all_positive_milestones() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 100_0000000_i128, 1_i128, 999_0000000_i128];
-    let id = client.create_contract(&hiring_party, &service_provider, &milestones);
+    let id = client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
     assert!(id > 0);
 }
 
@@ -54,7 +54,7 @@ fn test_create_contract_accepts_all_positive_milestones() {
 fn test_create_contract_panics_when_total_exceeds_maximum() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 600_000_0000000_i128, 500_000_0000000_i128]; // 6M + 5M > 1M max
-    client.create_contract(&hiring_party, &service_provider, &milestones);
+    client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
 }
 
 #[test]
@@ -62,8 +62,8 @@ fn test_create_contract_panics_when_total_exceeds_maximum() {
 fn test_deposit_funds_panics_on_zero_amount() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 100_0000000_i128];
-    let contract_id = client.create_contract(&hiring_party, &service_provider, &milestones);
-    client.deposit_funds(&contract_id, &0_i128);
+    let contract_id = client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+    client.deposit_funds(&contract_id, &hiring_party, &0_i128);
 }
 
 #[test]
@@ -71,8 +71,8 @@ fn test_deposit_funds_panics_on_zero_amount() {
 fn test_deposit_funds_panics_on_negative_amount() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 100_0000000_i128];
-    let contract_id = client.create_contract(&hiring_party, &service_provider, &milestones);
-    client.deposit_funds(&contract_id, &-100_0000000_i128);
+    let contract_id = client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+    client.deposit_funds(&contract_id, &hiring_party, &-100_0000000_i128);
 }
 
 #[test]
@@ -80,21 +80,21 @@ fn test_deposit_funds_panics_on_negative_amount() {
 fn test_deposit_funds_panics_when_exceeding_contract_maximum() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 500_0000000_i128];
-    let contract_id = client.create_contract(&hiring_party, &service_provider, &milestones);
-    client.deposit_funds(&contract_id, &1_000_000_0000000_i128); // 1M tokens > remaining capacity
+    let contract_id = client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
+    client.deposit_funds(&contract_id, &hiring_party, &1_000_000_0000000_i128); // 1M tokens > remaining capacity
 }
 
 #[test]
 fn test_deposit_funds_accepts_valid_amounts() {
     let (env, client, hiring_party, service_provider) = setup();
     let milestones = vec![&env, 100_0000000_i128, 200_0000000_i128];
-    let contract_id = client.create_contract(&hiring_party, &service_provider, &milestones);
+    let contract_id = client.create_contract(&hiring_party, &service_provider, &None, &milestones, &ReleaseAuthorization::ClientOnly);
     
     // Valid deposit
-    assert!(client.deposit_funds(&contract_id, &100_0000000_i128));
+    assert!(client.deposit_funds(&contract_id, &hiring_party, &100_0000000_i128));
     
     // Another valid deposit within remaining capacity
-    assert!(client.deposit_funds(&contract_id, &200_0000000_i128));
+    assert!(client.deposit_funds(&contract_id, &hiring_party, &200_0000000_i128));
 }
 
 #[test]
@@ -105,12 +105,12 @@ fn test_single_amount_validation() {
     assert!(validate_single_amount(1_000_000_0000000).is_ok()); // Max single amount
 
     // Invalid amounts
-    assert_eq!(validate_single_amount(0), Err(AmountValidationError::NonPositiveAmount));
-    assert_eq!(validate_single_amount(-1), Err(AmountValidationError::NonPositiveAmount));
-    assert_eq!(validate_single_amount(-100_0000000), Err(AmountValidationError::NonPositiveAmount));
+    assert_eq!(validate_single_amount(0), Err(EscrowError::AmountMustBePositive));
+    assert_eq!(validate_single_amount(-1), Err(EscrowError::AmountMustBePositive));
+    assert_eq!(validate_single_amount(-100_0000000), Err(EscrowError::AmountMustBePositive));
     assert_eq!(
         validate_single_amount(1_000_000_0000001), 
-        Err(AmountValidationError::AmountExceedsMaximum)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -133,13 +133,13 @@ fn test_milestone_amounts_validation() {
 
     // Invalid arrays
     let milestones4 = vec![100_0000000, 0, 300_0000000]; // Contains zero
-    assert_eq!(validate_milestone_amounts(&milestones4, max_total), Err(AmountValidationError::NonPositiveAmount));
+    assert_eq!(validate_milestone_amounts(&milestones4, max_total), Err(EscrowError::AmountMustBePositive));
 
     let milestones5 = vec![100_0000000, -50_0000000, 300_0000000]; // Contains negative
-    assert_eq!(validate_milestone_amounts(&milestones5, max_total), Err(AmountValidationError::NonPositiveAmount));
+    assert_eq!(validate_milestone_amounts(&milestones5, max_total), Err(EscrowError::AmountMustBePositive));
 
     let milestones6 = vec![600_000_0000000, 500_000_0000000]; // Exceeds contract max
-    assert_eq!(validate_milestone_amounts(&milestones6, max_total), Err(AmountValidationError::ExceedsContractMaximum));
+    assert_eq!(validate_milestone_amounts(&milestones6, max_total), Err(EscrowError::InvalidMilestoneAmount));
 }
 
 #[test]
@@ -152,19 +152,19 @@ fn test_deposit_amount_validation() {
     assert!(validate_deposit_amount(max_total, 0, max_total).is_ok());
 
     // Invalid deposits
-    assert_eq!(validate_deposit_amount(0, 0, max_total), Err(AmountValidationError::NonPositiveAmount));
-    assert_eq!(validate_deposit_amount(-1, 0, max_total), Err(AmountValidationError::NonPositiveAmount));
+    assert_eq!(validate_deposit_amount(0, 0, max_total), Err(EscrowError::AmountMustBePositive));
+    assert_eq!(validate_deposit_amount(-1, 0, max_total), Err(EscrowError::AmountMustBePositive));
 
     // Would exceed maximum
     assert_eq!(
         validate_deposit_amount(600_000_0000000, 500_000_0000000, max_total),
-        Err(AmountValidationError::ExceedsContractMaximum)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 
     // Single amount exceeds maximum
     assert_eq!(
         validate_deposit_amount(1_000_000_0000001, 0, max_total),
-        Err(AmountValidationError::AmountExceedsMaximum)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
 
@@ -194,14 +194,14 @@ fn test_edge_cases() {
 
     // Test boundary values
     assert!(validate_single_amount(1_000_000_0000000).is_ok()); // Max single amount
-    assert_eq!(validate_single_amount(1_000_000_0000001), Err(AmountValidationError::AmountExceedsMaximum));
+    assert_eq!(validate_single_amount(1_000_000_0000001), Err(EscrowError::InvalidMilestoneAmount));
 
     // Test contract boundary
     let boundary_milestones = vec![MAX_TOTAL_ESCROW_STROOPS];
     assert!(validate_milestone_amounts(&boundary_milestones, max_total).is_ok());
 
     let over_boundary_milestones = vec![MAX_TOTAL_ESCROW_STROOPS + 1];
-    assert_eq!(validate_milestone_amounts(&over_boundary_milestones, max_total), Err(AmountValidationError::AmountExceedsContractMaximum));
+    assert_eq!(validate_milestone_amounts(&over_boundary_milestones, max_total), Err(EscrowError::InvalidMilestoneAmount));
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn test_large_amount_arrays() {
     for _ in 0..10 {
         overflow_milestones.push(200_000_0000000); // 200M tokens each
     }
-    assert_eq!(validate_milestone_amounts(&overflow_milestones, max_total), Err(AmountValidationError::ExceedsContractMaximum));
+    assert_eq!(validate_milestone_amounts(&overflow_milestones, max_total), Err(EscrowError::InvalidMilestoneAmount));
 }
 
 #[test]
@@ -251,6 +251,6 @@ fn test_cumulative_deposit_validation() {
     // Should fail when cumulative exceeds maximum
     assert_eq!(
         validate_deposit_amount(800_000_0000000, 300_000_0000000, max_total),
-        Err(AmountValidationError::ExceedsContractMaximum)
+        Err(EscrowError::InvalidMilestoneAmount)
     );
 }
