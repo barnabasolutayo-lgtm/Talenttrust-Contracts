@@ -40,7 +40,6 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     }
 
     contract.funded_amount += amount;
-    contract.total_deposited += amount;
 
     let milestone_key = Symbol::new(&env, "milestones");
     let milestones: Vec<Milestone> = env
