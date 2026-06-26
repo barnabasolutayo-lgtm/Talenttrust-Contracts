@@ -98,11 +98,8 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
-    EmptyComment = 31,
-    CommentTooLong = 32,
-    EvidenceTooLong = 33,
-    InvalidProtocolParameters = 34,
-    TimelockNotElapsed = 35,
+    /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
+    EvidenceTooLong = 31,
 }
 
 /// Returns `Some(a + b)`, or `None` on overflow.
@@ -1150,7 +1147,92 @@ impl Escrow {
         true
     }
 
-    // ── Governance entrypoints ────────────────────────────────────────────────
+    /// Returns the work evidence for a single milestone, or `None` if the
+    /// milestone index is out of bounds or no evidence was submitted.
+    ///
+    /// # Arguments
+    /// * `contract_id` - The escrow contract ID
+    /// * `milestone_index` - Zero-based index of the milestone
+    ///
+    /// # Returns
+    /// `Some(String)` with the evidence reference if it exists,
+    /// `None` when the index is out of bounds or the milestone has no evidence.
+    ///
+    /// # Panics
+    /// Panics with `ContractNotFound` if `contract_id` was never allocated.
+    ///
+    /// # TTL
+    /// Extends the milestones vector's persistent TTL on read,
+    /// consistent with `get_milestones`.
+    pub fn get_work_evidence(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+    ) -> Option<String> {
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            return None;
+        }
+
+        milestones.get(milestone_index).unwrap().work_evidence
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    /// Proposes a client migration for an existing contract.
+    pub fn propose_client_migration(
+        env: Env,
+        contract_id: u32,
+        current_client: Address,
+        new_client: Address,
+    ) -> bool {
+        Self::propose_client_migration_impl(env, contract_id, current_client, new_client)
+    }
+
+    /// Accepts a pending client migration.
+    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
+        Self::accept_client_migration_impl(env, contract_id, new_client)
+    }
+
+    /// Returns true if a live pending client migration exists.
+    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
+        Self::has_pending_client_migration_impl(env, contract_id)
+    }
+
+    /// Returns the live pending client migration record.
+    pub fn get_pending_client_migration(
+        env: Env,
+        contract_id: u32,
+    ) -> migration::PendingClientMigration {
+        Self::get_pending_client_migration_impl(env, contract_id)
+    }
+
+    // ── Finalization ─────────────────────────────────────────────────────────
+
+    /// Finalizes an escrow contract by writing immutable close metadata.
+    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
+        Self::finalize_contract_impl(env, contract_id, finalizer)
+    }
+
+    /// Returns immutable close metadata for a contract.
+    pub fn get_finalization_record(
+        env: Env,
+        contract_id: u32,
+    ) -> Option<finalize::FinalizationRecord> {
+        Self::get_finalization_record_impl(env, contract_id)
+    }
+
+    // ── Governance ───────────────────────────────────────────────────────────
 
     /// Sets the protocol fee in basis points.
     pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
