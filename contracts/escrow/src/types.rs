@@ -31,88 +31,6 @@ pub struct ContractSummary {
     pub milestones: Vec<MilestoneSummary>,
 }
 
-/// Main escrow contract state
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Contract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub status: ContractStatus,
-    pub total_deposited: i128,
-    pub funded_amount: i128,
-    pub released_amount: i128,
-    pub refunded_amount: i128,
-    pub release_authorization: ReleaseAuthorization,
-}
-
-// ─── Storage keys ──────────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DataKey {
-    // Admin / pause / emergency
-    Initialized,
-    Admin,
-    Paused,
-    Emergency,
-    // Contract storage
-    Contract(u32),
-    NextContractId,
-    MilestoneReleased(u32, u32),
-    MilestoneApprovals(u32, u32),
-    // Reputation
-    ReputationIssued(u32),
-    PendingReputationCredits(Address),
-    Reputation(Address),
-    // Client migration
-    PendingClientMigration(u32),
-    // Protocol / governance
-    GovernanceAdmin,
-    PendingGovernanceAdmin,
-    ProtocolParameters,
-    ProtocolFeeBps,
-    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
-    PendingAdmin,
-    AccumulatedProtocolFees,
-    GovernedParameters,
-    ReadinessChecklist,
-    // Finalization
-    Finalization(u32),
-}
-
-/// Canonical contract error type for all entrypoint-facing errors.
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Error {
-    IndexOutOfBounds = 3,
-    AlreadyReleased = 4,
-    EmptyRefundRequest = 6,
-    DuplicateMilestoneInRefund = 7,
-    AlreadyRefunded = 8,
-    InsufficientFunds = 9,
-    ContractNotFound = 10,
-    UnauthorizedRole = 11,
-    MissingArbiter = 12,
-    InvalidArbiter = 13,
-    InvalidParticipants = 14,
-    AmountMustBePositive = 15,
-    InvalidState = 16,
-    MilestoneAlreadyReleased = 17,
-    AlreadyApproved = 18,
-    InsufficientApprovals = 20,
-    FreelancerMismatch = 21,
-    InvalidRating = 22,
-    ReputationAlreadyIssued = 23,
-    EmptyMilestones = 25,
-    InvalidMilestoneAmount = 26,
-    ContractIdCollision = 27,
-    ContractIdOverflow = 28,
-    EmptyComment = 29,
-    CommentTooLong = 30,
-}
-
 /// Contract lifecycle states
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,6 +45,7 @@ pub enum ContractStatus {
     PartiallyFunded = 7,
 }
 
+/// Main escrow contract state
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Contract {
@@ -184,6 +103,8 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
+// ─── Storage keys ──────────────────────────────────────────────────────────────
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -197,7 +118,7 @@ pub enum DataKey {
     NextContractId,
     MilestoneReleased(u32, u32),
     MilestoneApprovals(u32, u32),
-    // Reputation (keep ReputationIssued for backwards compatibility, but we'll use the field in Contract)
+    // Reputation
     ReputationIssued(u32),
     PendingReputationCredits(Address),
     Reputation(Address),
@@ -208,13 +129,53 @@ pub enum DataKey {
     PendingGovernanceAdmin,
     ProtocolParameters,
     ProtocolFeeBps,
-    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    // Two-step admin transfer
     PendingAdmin,
     AccumulatedProtocolFees,
     GovernedParameters,
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+    // Settlement token
+    SettlementToken,
+}
+
+/// Canonical contract error type for all entrypoint-facing errors.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
+    EmptyComment = 29,
+    CommentTooLong = 30,
+    ArbiterRequired = 31,
+    AccountingInvariantViolated = 32,
+    PotentialOverflow = 33,
+    InvalidDisputeSplit = 34,
+    ApprovalExpired = 35,
+    NotInitialized = 36,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
@@ -244,38 +205,6 @@ impl Default for ReadinessChecklist {
 pub struct GovernedParameters {
     pub protocol_fee_bps: u32,
     pub max_escrow_total_stroops: i128,
-}
-
-/// Defines who can approve milestone releases.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    /// Only client can approve.
-    ClientOnly = 0,
-    /// Either client or arbiter can approve.
-    ClientAndArbiter = 1,
-    /// Only arbiter can approve.
-    ArbiterOnly = 2,
-    /// Both client and freelancer must approve; only either of them may release
-    /// after both approvals are present.
-    MultiSig = 3,
-}
-
-/// Tracks approval status for a milestone.
-/// Stored in temporary storage with TTL for expiry grace period.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DepositMode {
-    ExactTotal = 0,
-    Incremental = 1,
 }
 
 #[contracttype]

@@ -51,7 +51,7 @@ fn issue_reputation_rejects_empty_comment() {
     let (client_addr, _freelancer_addr, contract_id) = complete_contract(&env, &client);
 
     let empty_comment = String::from_str(&env, "");
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &empty_comment);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::EmptyComment);
 }
 
@@ -64,7 +64,7 @@ fn issue_reputation_rejects_comment_too_long() {
 
     let long_str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let long_comment = String::from_str(&env, long_str);
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &5, &long_comment);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::CommentTooLong);
 }
 
@@ -147,7 +147,7 @@ fn get_average_rating_single_rating_returns_scaled_value() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
 
-    client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &4);
+    client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     // 4 * 10_000 / 1 = 40_000
     assert_eq!(client.get_average_rating(&freelancer_addr), Some(40_000));
@@ -161,7 +161,7 @@ fn get_average_rating_multiple_ratings_returns_correct_scaled_average() {
 
     // First contract: rating 3
     let (client_addr1, freelancer_addr, contract_id1) = complete_contract(&env, &client);
-    client.issue_reputation(&contract_id1, &client_addr1, &freelancer_addr, &3);
+    client.issue_reputation(&contract_id1, &client_addr1, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     // Second contract: same freelancer, rating 5
     let client_addr2 = Address::generate(&env);
@@ -181,7 +181,7 @@ fn get_average_rating_multiple_ratings_returns_correct_scaled_average() {
     client.release_milestone(&contract_id2, &client_addr2, &1);
     client.approve_milestone_release(&contract_id2, &client_addr2, &2);
     client.release_milestone(&contract_id2, &client_addr2, &2);
-    client.issue_reputation(&contract_id2, &client_addr2, &freelancer_addr, &5);
+    client.issue_reputation(&contract_id2, &client_addr2, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     // total_rating=8, completed_contracts=2 → 8 * 10_000 / 2 = 40_000
     assert_eq!(client.get_average_rating(&freelancer_addr), Some(40_000));
@@ -195,7 +195,7 @@ fn get_average_rating_fractional_average_is_preserved() {
 
     // First contract: rating 1
     let (client_addr1, freelancer_addr, contract_id1) = complete_contract(&env, &client);
-    client.issue_reputation(&contract_id1, &client_addr1, &freelancer_addr, &1);
+    client.issue_reputation(&contract_id1, &client_addr1, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     // Second contract: rating 2
     let client_addr2 = Address::generate(&env);
@@ -215,7 +215,7 @@ fn get_average_rating_fractional_average_is_preserved() {
     client.release_milestone(&contract_id2, &client_addr2, &1);
     client.approve_milestone_release(&contract_id2, &client_addr2, &2);
     client.release_milestone(&contract_id2, &client_addr2, &2);
-    client.issue_reputation(&contract_id2, &client_addr2, &freelancer_addr, &2);
+    client.issue_reputation(&contract_id2, &client_addr2, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
 
     // total_rating=3, completed_contracts=2 → 3 * 10_000 / 2 = 15_000
     assert_eq!(client.get_average_rating(&freelancer_addr), Some(15_000));
