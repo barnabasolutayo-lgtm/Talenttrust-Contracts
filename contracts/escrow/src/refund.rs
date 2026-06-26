@@ -1,17 +1,33 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone};
-use soroban_sdk::{Env, Symbol, Vec};
+use crate::{
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+};
+use soroban_sdk::{contractimpl, Env, Symbol, Vec};
 
+#[contractimpl]
 impl Escrow {
-    /// Core logic for refunding unreleased milestones back to the client.
+    /// Refunds unreleased milestones back to the client.
     ///
-    /// Called from the single `#[contractimpl]` block in lib.rs after the
-    /// initialization and pause guards have been checked.
-    pub(crate) fn refund_unreleased_milestones_impl(
-        env: &Env,
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `milestone_indices` - Vector of milestone indices to refund
+    ///
+    /// # Returns
+    /// The total amount refunded
+    ///
+    /// # Errors
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `EmptyRefundRequest` - If milestone_indices is empty
+    /// * `DuplicateMilestoneInRefund` - If the same milestone appears multiple times
+    /// * `IndexOutOfBounds` - If any milestone index is out of bounds
+    /// * `AlreadyReleased` - If any milestone was already released
+    /// * `AlreadyRefunded` - If any milestone was already refunded
+    /// * `InsufficientFunds` - If contract doesn't have enough balance to refund
+    pub fn refund_unreleased_milestones(
+        env: Env,
         contract_id: u32,
         milestone_indices: Vec<u32>,
     ) -> i128 {
-        Self::require_not_paused(&env);
         if milestone_indices.is_empty() {
             env.panic_with_error(Error::EmptyRefundRequest);
         }
@@ -30,23 +46,20 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
-        ttl::extend_contract_ttl(env, contract_id);
+        ttl::extend_contract_ttl(&env, contract_id);
 
-        Self::require_not_finalized(env, contract_id);
+        Self::require_not_finalized(&env, contract_id);
 
         contract.client.require_auth();
 
-        let milestone_key = Symbol::new(env, "milestones");
+        let milestone_key = Symbol::new(&env, "milestones");
         let mut milestones: Vec<Milestone> = env
             .storage()
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
             .unwrap();
 
-        ttl::extend_milestone_ttl(env, contract_id);
-
-        contract.client.require_auth();
-        Self::require_not_finalized(&env, contract_id);
+        ttl::extend_milestone_ttl(&env, contract_id);
 
         let mut total_refund_amount: i128 = 0;
 
@@ -89,18 +102,18 @@ impl Escrow {
                 contract.status = ContractStatus::Refunded;
             } else {
                 contract.status = ContractStatus::Completed;
-                let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
-                let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
-                env.storage().persistent().set(&pending_key, &(pending + 1));
             }
         }
 
-        ttl::store_milestones(&env, contract_id, &milestones);
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
-        ttl::extend_contract_and_milestones_ttl(env, contract_id);
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
 
         total_refund_amount
     }

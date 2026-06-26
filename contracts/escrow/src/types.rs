@@ -1,5 +1,53 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
+// ─── Indexer summary types ────────────────────────────────────────────────────
+
+#[allow(dead_code)]
+pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneSummary {
+    pub index: u32,
+    pub amount: i128,
+    pub released: bool,
+    pub refunded: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractSummary {
+    pub schema_version: u32,
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub reputation_issued: bool,
+    pub total_amount: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refundable_balance: i128,
+    pub released_milestone_count: u32,
+    pub milestones: Vec<MilestoneSummary>,
+}
+
+/// Main escrow contract state
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contract {
+    pub client: Address,
+    pub freelancer: Address,
+    pub arbiter: Option<Address>,
+    pub status: ContractStatus,
+    pub total_deposited: i128,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+}
+
+// ─── Storage keys ──────────────────────────────────────────────────────────────
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -61,6 +109,22 @@ pub enum Error {
     InvalidMilestoneAmount = 26,
     ContractIdCollision = 27,
     ContractIdOverflow = 28,
+    EmptyComment = 29,
+    CommentTooLong = 30,
+}
+
+/// Contract lifecycle states
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContractStatus {
+    Created = 0,
+    Accepted = 1,
+    Funded = 2,
+    Completed = 3,
+    Disputed = 4,
+    Cancelled = 5,
+    Refunded = 6,
+    PartiallyFunded = 7,
 }
 
 #[contracttype]
@@ -74,16 +138,21 @@ pub struct Contract {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
+    pub reputation_issued: bool,
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneApprovals {
-    pub client_approved: bool,
-    pub freelancer_approved: bool,
-    pub arbiter_approved: bool,
+pub struct Milestone {
+    pub amount: i128,
+    pub funded_amount: i128,
+    pub released: bool,
+    pub refunded: bool,
+    pub work_evidence: Option<String>,
+    pub refunded_amount: i128,
 }
 
+/// Defines who can approve milestone releases.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseAuthorization {
@@ -96,6 +165,23 @@ pub enum ReleaseAuthorization {
     /// Both client and freelancer must approve; only either of them may release
     /// after both approvals are present.
     MultiSig = 3,
+}
+
+/// Tracks approval status for a milestone.
+/// Stored in temporary storage with TTL for expiry grace period.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DepositMode {
+    ExactTotal = 0,
+    Incremental = 1,
 }
 
 #[contracttype]
@@ -111,10 +197,7 @@ pub enum DataKey {
     NextContractId,
     MilestoneReleased(u32, u32),
     MilestoneApprovals(u32, u32),
-    // Participant indexer (append-only contract id lists)
-    ClientContracts(Address),
-    FreelancerContracts(Address),
-    // Reputation
+    // Reputation (keep ReputationIssued for backwards compatibility, but we'll use the field in Contract)
     ReputationIssued(u32),
     PendingReputationCredits(Address),
     Reputation(Address),
@@ -132,31 +215,6 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
-}
-
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ContractStatus {
-    Created = 0,
-    Accepted = 1,
-    Funded = 2,
-    Completed = 3,
-    Disputed = 4,
-    Cancelled = 5,
-    Refunded = 6,
-    PartiallyFunded = 7,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Milestone {
-    pub amount: i128,
-    pub funded_amount: i128,
-    pub released: bool,
-    pub refunded: bool,
-    pub work_evidence: Option<String>,
-    pub refunded_amount: i128,
-    pub deadline: Option<u64>,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
@@ -188,108 +246,29 @@ pub struct GovernedParameters {
     pub max_escrow_total_stroops: i128,
 }
 
-// ─── Indexer summary types ────────────────────────────────────────────────────
-
-/// Current schema version for [`ContractSummary`].
-///
-/// Bumped when a breaking change is made to the summarised shape.
-/// Downstream indexers MUST branch on this field to decode the
-/// rest of the struct correctly.
-///
-/// # Current value
-/// `1`
-///
-/// # Versioning policy
-/// See `docs/escrow/indexer-schema.md`.
-#[allow(dead_code)]
-pub const CONTRACT_SUMMARY_SCHEMA_VERSION: u32 = 1;
-
-/// Per-milestone summary embedded in [`ContractSummary`].
-///
-/// A lightweight projection of the on-chain [`Milestone`] that omits
-/// internal accounting fields (`funded_amount`, `refunded_amount`,
-/// `work_evidence`) that are not relevant to off-chain indexers.
-///
-/// # Fields
-/// * `index` – 0-based position in the milestones vector.
-/// * `amount` – Original amount specified at contract creation (stroops).
-/// * `released` – `true` after [`release_milestone`] succeeds.
-/// * `refunded` – `true` after [`refund_unreleased_milestones`] includes this
-///   index.
-///
-/// [`release_milestone`]: crate::Escrow::release_milestone
-/// [`refund_unreleased_milestones`]: crate::Escrow::refund_unreleased_milestones
+/// Defines who can approve milestone releases.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MilestoneSummary {
-    /// 0-based milestone index.
-    pub index: u32,
-    /// Original milestone amount in stroops (set at creation).
-    pub amount: i128,
-    /// Whether this milestone has been released.
-    pub released: bool,
-    /// Whether this milestone has been refunded.
-    pub refunded: bool,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    /// Only client can approve.
+    ClientOnly = 0,
+    /// Either client or arbiter can approve.
+    ClientAndArbiter = 1,
+    /// Only arbiter can approve.
+    ArbiterOnly = 2,
+    /// Both client and freelancer must approve; only either of them may release
+    /// after both approvals are present.
+    MultiSig = 3,
 }
 
-/// Denormalised, versioned snapshot of an escrow contract for off-chain
-/// indexers.
-///
-/// Produced during [`finalize_contract`] and stored as part of the
-/// finalization record.
-///
-/// # Field provenance
-///
-/// | Classification | Fields |
-/// |---|---|
-/// | Copied verbatim from [`Contract`] | `client`, `freelancer`, `arbiter`, `status`, `funded_amount`, `released_amount` |
-/// | Per-milestone projection from stored [`Milestone`] records | `milestones` |
-/// | Derived at finalisation | `total_amount`, `refundable_balance`, `released_milestone_count` |
-/// | Set to [`CONTRACT_SUMMARY_SCHEMA_VERSION`] | `schema_version` |
-/// | Hardcoded (see caveat) | `reputation_issued` |
-///
-/// # Versioning
-/// See `docs/escrow/indexer-schema.md`.
+/// Tracks approval status for a milestone.
+/// Stored in temporary storage with TTL for expiry grace period.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractSummary {
-    /// Schema version used to produce this snapshot.
-    /// Indexers MUST check this before decoding.
-    pub schema_version: u32,
-    /// Client address (copied from [`Contract::client`]).
-    pub client: Address,
-    /// Freelancer address (copied from [`Contract::freelancer`]).
-    pub freelancer: Address,
-    /// Optional arbiter address (copied from [`Contract::arbiter`]).
-    pub arbiter: Option<Address>,
-    /// Contract status at finalisation time (copied from [`Contract::status`]).
-    pub status: ContractStatus,
-    /// **Hardcoded to `false`** – not yet wired to the on-chain
-    /// `DataKey::ReputationIssued` flag.
-    ///
-    /// # Caveat
-    /// This field does NOT reflect the actual reputation issuance state.
-    /// See `docs/escrow/indexer-schema.md` for details.
-    pub reputation_issued: bool,
-    /// Sum of every milestone's `amount` field (derived at finalisation).
-    pub total_amount: i128,
-    /// Total amount deposited by the client (copied from
-    /// [`Contract::funded_amount`]).
-    pub funded_amount: i128,
-    /// Total amount released to the freelancer (copied from
-    /// [`Contract::released_amount`]).
-    pub released_amount: i128,
-    /// Remaining escrow balance that can be refunded (derived).
-    ///
-    /// Computed as:
-    /// ```text
-    /// refundable_balance = (funded_amount - released_amount) - refunded_amount
-    /// ```
-    pub refundable_balance: i128,
-    /// Number of milestones with `released == true` (derived).
-    pub released_milestone_count: u32,
-    /// Per-milestone summary entries.
-    pub milestones: Vec<MilestoneSummary>,
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
 }
 
 #[contracttype]

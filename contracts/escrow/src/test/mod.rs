@@ -1,19 +1,20 @@
 #![cfg(test)]
 #![allow(dead_code)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
 
 mod approval_expiry;
 mod client_migration;
+mod dispute;
 mod emergency_controls;
+mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
-mod reputation;
 
 // --- Shared constants ---
 
@@ -104,8 +105,14 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
-pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
-    result: Result<T, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+pub fn assert_contract_error<
+    T: core::fmt::Debug,
+    E: Into<soroban_sdk::Error> + core::fmt::Debug,
+>(
+    result: Result<
+        Result<T, soroban_sdk::ConversionError>,
+        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
+    >,
     expected: E,
 ) {
     match result {
@@ -114,20 +121,49 @@ pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
             assert_eq!(e, expected_err, "contract error code mismatch");
         }
         _other => panic!(
-            "expected contract error {:?}, got unexpected result variant",
-            expected
+            "expected contract error {:?}, got unexpected result variant: {:?}",
+            expected, _other
         ),
     }
 }
 
-/// Helper: forcibly inject a contract status via env.as_contract.
-pub fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: ContractStatus) {
-    use crate::{Contract as EscrowContract, DataKey};
-    env.as_contract(escrow_addr, || {
-        let key = DataKey::Contract(id);
-        let _contract: EscrowContract = env.storage().persistent().get(&key).unwrap();
-        let mut contract: crate::Contract = env.storage().persistent().get(&key).unwrap();
-        contract.status = status;
-        env.storage().persistent().set(&key, &contract);
-    });
+pub fn setup() -> (Env, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    (env, client_addr, freelancer_addr)
+}
+
+pub fn create_client(env: &Env) -> EscrowClient<'_> {
+    register_client(env)
+}
+
+pub fn create_default_contract(
+    env: &Env,
+    client: &EscrowClient<'_>,
+    client_addr: &Address,
+    freelancer_addr: &Address,
+) -> u32 {
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+    client.create_contract(
+        client_addr,
+        freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    )
+}
+
+pub fn assert_contract_state(
+    contract: Contract,
+    expected_status: ContractStatus,
+    expected_funded: i128,
+    expected_released: i128,
+    expected_refunded: i128,
+) {
+    assert_eq!(contract.status, expected_status);
+    assert_eq!(contract.funded_amount, expected_funded);
+    assert_eq!(contract.released_amount, expected_released);
+    assert_eq!(contract.refunded_amount, expected_refunded);
 }
