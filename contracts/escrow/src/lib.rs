@@ -23,8 +23,6 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-
-mod amount_validation;
 mod amount_validation;
 mod approvals;
 mod create_contract;
@@ -46,9 +44,6 @@ pub use types::{
     Milestone, MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization,
     Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-
-// Re-export for internal use
-pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
@@ -100,11 +95,10 @@ pub enum EscrowError {
     AmountMustBePositive = 30,
     /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
     EvidenceTooLong = 31,
-}
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
+    /// Returned by `set_governed_params` when `protocol_fee_bps > 10_000`.
+    InvalidProtocolParameters = 32,
+    /// Returned by `accept_governance_admin` before the rotation timelock elapses.
+    TimelockNotElapsed = 33,
 }
 
 #[contractimpl]
@@ -114,6 +108,19 @@ impl Escrow {
     /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
+    }
+
+    // ── Schema versioning ────────────────────────────────────────────────────
+
+    /// Returns the schema version embedded in every [`ContractSummary`].
+    ///
+    /// Indexers should store this value alongside every snapshot. When the
+    /// version on a stored record differs from the value returned here, the
+    /// record needs re-processing against the updated schema. See
+    /// `docs/escrow/contract-summary-schema-versioning.md` for the bump
+    /// policy and migration guide.
+    pub fn get_summary_schema_version(_env: Env) -> u32 {
+        CONTRACT_SUMMARY_SCHEMA_VERSION
     }
 
     // ── Initialization ───────────────────────────────────────────────────────
@@ -655,6 +662,19 @@ impl Escrow {
         // Extend TTL on contract write (milestone TTL already extended by store_milestones)
         ttl::extend_contract_ttl(&env, contract_id);
 
+        // Emit `refunded` event after all state mutations succeed.
+        //
+        // Topics : `(symbol_short!("refunded"), contract_id: u32)`
+        // Data   : `(total_refund_amount: i128, new_status: ContractStatus, timestamp: u64)`
+        env.events().publish(
+            (symbol_short!("refunded"), contract_id),
+            (
+                total_refund_amount,
+                contract.status,
+                env.ledger().timestamp(),
+            ),
+        );
+
         total_refund_amount
     }
 
@@ -878,31 +898,16 @@ impl Escrow {
 
         caller.require_auth();
         Self::require_not_finalized(&env, contract_id);
-        let old_status = contract.status.clone();
         contract.status = ContractStatus::Cancelled;
-        emit_status_changed(env, contract_id, old_status, ContractStatus::Cancelled);
+        env.events().publish(
+            (symbol_short!("status"), contract_id),
+            (ContractStatus::Cancelled, env.ledger().timestamp()),
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
         ttl::extend_contract_ttl(&env, contract_id);
         true
-    }
-
-    // ── Dispute management ────────────────────────────────────────────────────
-
-    /// Opens a dispute on a funded or partially funded escrow.
-    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
-        Self::raise_dispute_impl(env, contract_id, caller)
-    }
-
-    /// Resolves an open dispute with the arbiter-selected resolution.
-    pub fn resolve_dispute(
-        env: Env,
-        contract_id: u32,
-        arbiter: Address,
-        resolution: DisputeResolution,
-    ) -> bool {
-        Self::resolve_dispute_impl(env, contract_id, arbiter, resolution)
     }
 
     // ── Reputation ───────────────────────────────────────────────────────────
@@ -946,11 +951,11 @@ impl Escrow {
         }
 
         if comment.len() == 0 {
-            env.panic_with_error(EscrowError::EmptyComment);
+            env.panic_with_error(Error::EmptyComment);
         }
 
         if comment.len() > 200 {
-            env.panic_with_error(EscrowError::CommentTooLong);
+            env.panic_with_error(Error::CommentTooLong);
         }
 
         if contract.status != ContractStatus::Completed {
@@ -1164,11 +1169,7 @@ impl Escrow {
     /// # TTL
     /// Extends the milestones vector's persistent TTL on read,
     /// consistent with `get_milestones`.
-    pub fn get_work_evidence(
-        env: Env,
-        contract_id: u32,
-        milestone_index: u32,
-    ) -> Option<String> {
+    pub fn get_work_evidence(env: Env, contract_id: u32, milestone_index: u32) -> Option<String> {
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env
             .storage()
@@ -1183,53 +1184,6 @@ impl Escrow {
         }
 
         milestones.get(milestone_index).unwrap().work_evidence
-    }
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    /// Proposes a client migration for an existing contract.
-    pub fn propose_client_migration(
-        env: Env,
-        contract_id: u32,
-        current_client: Address,
-        new_client: Address,
-    ) -> bool {
-        Self::propose_client_migration_impl(env, contract_id, current_client, new_client)
-    }
-
-    /// Accepts a pending client migration.
-    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
-        Self::accept_client_migration_impl(env, contract_id, new_client)
-    }
-
-    /// Returns true if a live pending client migration exists.
-    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
-        Self::has_pending_client_migration_impl(env, contract_id)
-    }
-
-    /// Returns the live pending client migration record.
-    pub fn get_pending_client_migration(
-        env: Env,
-        contract_id: u32,
-    ) -> migration::PendingClientMigration {
-        Self::get_pending_client_migration_impl(env, contract_id)
-    }
-
-    // ── Finalization ─────────────────────────────────────────────────────────
-
-    /// Finalizes an escrow contract by writing immutable close metadata.
-    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
-        Self::finalize_contract_impl(env, contract_id, finalizer)
-    }
-
-    /// Returns immutable close metadata for a contract.
-    pub fn get_finalization_record(
-        env: Env,
-        contract_id: u32,
-    ) -> Option<finalize::FinalizationRecord> {
-        Self::get_finalization_record_impl(env, contract_id)
     }
 
     // ── Governance ───────────────────────────────────────────────────────────
@@ -1360,21 +1314,6 @@ impl Escrow {
             .persistent()
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
-    }
-
-    fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
     }
 
     // -----------------------------------------------------------------------

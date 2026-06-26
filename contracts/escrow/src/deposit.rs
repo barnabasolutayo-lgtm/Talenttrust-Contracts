@@ -1,5 +1,5 @@
 use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone};
-use soroban_sdk::{Address, Env, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
 ///
@@ -46,9 +46,11 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
     if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
-       let old_status = contract.status.clone();
         contract.status = ContractStatus::Funded;
-        emit_status_changed(env, contract_id, old_status, ContractStatus::Funded);
+        env.events().publish(
+            (symbol_short!("status"), contract_id),
+            (ContractStatus::Funded, env.ledger().timestamp()),
+        );
     }
 
     env.storage()
@@ -68,15 +70,11 @@ fn deposit_emits_status_changed_event() {
     let client = register_client(&env);
     let (client_addr, _, contract_id) = create_contract(&env, &client);
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &total_milestone_amount(),
-    ));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
     let events = env.events().all();
 
-    assert!(events.iter().any(|e| {
-        format!("{:?}", e).contains("status_changed")
-    }));
+    assert!(events
+        .iter()
+        .any(|e| { format!("{:?}", e).contains("status_changed") }));
 }
