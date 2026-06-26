@@ -1,5 +1,5 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization,
+    ttl, Contract, ContractStatus, DataKey, DepositMode, Error, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -12,6 +12,7 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 /// * `arbiter` - Optional arbiter address for dispute resolution
 /// * `milestones` - Vector of milestone amounts (in stroops)
 /// * `release_authorization` - Authorization mode for milestone releases
+/// * `deposit_mode` - How funds should be deposited into the contract
 ///
 /// # Returns
 /// The unique contract ID
@@ -31,6 +32,7 @@ pub fn create_contract_impl(
     arbiter: Option<Address>,
     milestones: Vec<i128>,
     release_authorization: ReleaseAuthorization,
+    deposit_mode: DepositMode,
 ) -> u32 {
     client.require_auth();
 
@@ -78,6 +80,8 @@ pub fn create_contract_impl(
         released_amount: 0,
         refunded_amount: 0,
         release_authorization,
+        reputation_issued: false,
+        deposit_mode,
     };
     env.storage()
         .persistent()
@@ -119,16 +123,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        id
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(Error::ContractIdCollision);
     }
 
     id

@@ -21,7 +21,14 @@
 use soroban_sdk::{testutils::Address as _, testutils::Events, vec, Address, Env, IntoVal, Symbol, TryFromVal};
 
 use super::register_client;
-use crate::{ContractStatus, Error, Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{
+    ContractStatus,
+    DepositMode,
+    Error,
+    Escrow,
+    EscrowClient,
+    ReleaseAuthorization,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -97,6 +104,7 @@ fn create_contract_with_mode(
         arbiter,
         &milestones,
         release_auth,
+        &DepositMode::Incremental,
     )
 }
 
@@ -142,6 +150,7 @@ fn funded_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert!(client.deposit_funds(&id, &client_addr, &800_i128));
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
@@ -182,6 +191,7 @@ fn create(
         &arbiter_owned,
         &milestones(env),
         auth,
+        &DepositMode::Incremental,
     );
     assert!(client.deposit_funds(&id, client_addr, &total()));
     // Approve milestone 0 so release can go through on happy paths

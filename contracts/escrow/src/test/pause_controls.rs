@@ -14,7 +14,7 @@
 //!
 //! Run locally with `cargo test -p escrow --lib pause_controls`.
 
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{DepositMode, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ fn setup_created_contract(
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     (client_addr, freelancer_addr, id)
 }
@@ -69,6 +70,7 @@ fn setup_funded_contract(
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     client.deposit_funds(&id, &client_addr, &300_i128);
     (client_addr, freelancer_addr, id)
@@ -146,6 +148,7 @@ fn pause_blocks_create_contract() {
             &None,
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
+            &DepositMode::Incremental,
         ),
         EscrowError::ContractPaused,
     );
@@ -226,6 +229,7 @@ fn unpause_restores_create_contract() {
         &None,
         &vec![&env, 50_i128],
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert_eq!(id, 1);
 }
@@ -244,6 +248,7 @@ fn resolve_emergency_restores_create_contract() {
         &None,
         &vec![&env, 50_i128],
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert_eq!(id, 1);
 }
@@ -520,6 +525,7 @@ fn pause_gate_runs_before_auth_on_create_contract() {
             &None,
             &milestones,
             &ReleaseAuthorization::ClientOnly,
+            &DepositMode::Incremental,
         ),
         EscrowError::ContractPaused,
     );

@@ -1,5 +1,5 @@
 use super::{create_contract, register_client};
-use crate::{ContractStatus, EscrowError, ReleaseAuthorization};
+use crate::{ContractStatus, DepositMode, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 /// Finalization succeeds from Completed status; record snapshot matches contract state.
@@ -105,6 +105,7 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
 }
 
@@ -977,6 +978,7 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
         &None,
         &default_milestones(&env),
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert_eq!(id, 1);
 

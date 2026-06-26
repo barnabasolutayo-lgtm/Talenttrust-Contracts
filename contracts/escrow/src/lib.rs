@@ -33,10 +33,9 @@ mod governance;
 mod migration;
 mod ttl;
 mod types;
-mod amount_validation;
 mod utils;
 
-pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -45,7 +44,6 @@ pub use types::{
     MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
@@ -102,10 +100,6 @@ pub enum EscrowError {
 
 
 /// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
-
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
     a.checked_add(b)
 }
@@ -205,6 +199,7 @@ impl Escrow {
     /// * `arbiter` - Optional arbiter address for dispute resolution
     /// * `milestones` - Vector of milestone amounts (in stroops)
     /// * `release_authorization` - Authorization mode for milestone releases
+    /// * `deposit_mode` - How funds should be deposited into the contract
     ///
     /// # Returns
     /// The unique contract ID
@@ -224,8 +219,17 @@ impl Escrow {
         arbiter: Option<Address>,
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
+        deposit_mode: DepositMode,
     ) -> u32 {
-        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+        create_contract::create_contract_impl(
+            &env,
+            client,
+            freelancer,
+            arbiter,
+            milestones,
+            release_authorization,
+            deposit_mode,
+        )
     }
 
     /// Deposits funds into the contract. Transitions to Funded status when fully funded.
