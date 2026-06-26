@@ -25,6 +25,7 @@
 
 
 mod amount_validation;
+mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -45,6 +46,9 @@ pub use types::{
     Milestone, MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization,
     Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
+
+// Re-export for internal use
+pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
@@ -101,22 +105,10 @@ pub enum EscrowError {
     TimelockNotElapsed = 35,
 }
 
-fn emit_status_changed(
-    env: &Env,
-    contract_id: u32,
-    old_status: ContractStatus,
-    new_status: ContractStatus,
-) {
-    env.events().publish(
-        (Symbol::new(env, "status_changed"), contract_id),
-        (
-            old_status,
-            new_status,
-            env.ledger().timestamp(),
-        ),
-    );
+/// Returns `Some(a + b)`, or `None` on overflow.
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
 }
-
 
 #[contractimpl]
 impl Escrow {
@@ -996,7 +988,30 @@ impl Escrow {
         rep.last_rating = rating as i128;
         env.storage().persistent().set(&rep_key, &rep);
 
+        let comment_key = DataKey::ReputationComment(contract_id);
+        env.storage().persistent().set(&comment_key, &comment);
+        env.storage().persistent().extend_ttl(
+            &comment_key,
+            ttl::PERSISTENT_BUMP_THRESHOLD,
+            ttl::PERSISTENT_TTL_LEDGERS,
+        );
+
         true
+    }
+
+    /// Returns the written feedback provided by the client when reputation was issued.
+    /// Returns `None` if reputation has not been issued for this contract.
+    pub fn get_reputation_comment(env: Env, contract_id: u32) -> Option<String> {
+        let comment_key = DataKey::ReputationComment(contract_id);
+        let comment: Option<String> = env.storage().persistent().get(&comment_key);
+        if comment.is_some() {
+            env.storage().persistent().extend_ttl(
+                &comment_key,
+                ttl::PERSISTENT_BUMP_THRESHOLD,
+                ttl::PERSISTENT_TTL_LEDGERS,
+            );
+        }
+        comment
     }
 
     pub fn get_reputation(env: Env, address: Address) -> Option<types::Reputation> {

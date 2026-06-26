@@ -808,10 +808,7 @@ fn get_milestones_read_extends_persistent_ttl() {
 fn release_milestone_write_extends_persistent_ttl() {
     let env = setup_ttl_env();
     let client = register_client(&env);
-    let (client_addr, _freelancer_addr, contract_id) =
-        create_contract(&env, &client);
-    
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
+    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let bump_threshold = ttl::PERSISTENT_BUMP_THRESHOLD as u32;
     let extension = ttl::PERSISTENT_TTL_LEDGERS as u32;
@@ -820,12 +817,13 @@ fn release_milestone_write_extends_persistent_ttl() {
     let initial_ttl: u32 = env.as_contract(&client.address, || {
         env.storage()
             .persistent()
-            .get_ttl(&(crate::DataKey::Contract(contract_id), milestone_key.clone()))
+            .get_ttl(&crate::DataKey::Contract(contract_id))
     });
 
     env.ledger().with_mut(|li| {
-        li.sequence_number =
-            li.sequence_number.saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
+        li.sequence_number = li
+            .sequence_number
+            .saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
     });
 
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
@@ -967,10 +965,10 @@ fn read_getters_succeed_after_creating_contract_at_zero_index() {
     // it remains not-found, then exercise slot 1.
     assert_contract_error(client.try_get_contract(&0), EscrowError::ContractNotFound);
     assert_contract_error(client.try_get_milestones(&0), EscrowError::ContractNotFound);
-    match client.try_get_refundable_balance(&0) {
-        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
-        other => panic!("expected ContractNotFound, got {:?}", other),
-    };
+    assert_contract_error(
+        client.try_get_refundable_balance(&0),
+        EscrowError::ContractNotFound,
+    );
 
     let (c, f) = generated_participants(&env);
     let id = client.create_contract(
