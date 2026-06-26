@@ -38,9 +38,7 @@ mod types;
 mod amount_validation;
 mod utils;
 
-
-
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
@@ -50,7 +48,9 @@ pub use types::{
 };
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
@@ -89,8 +89,9 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    EmptyComment = 25,
-    CommentTooLong = 26,
+    InvalidDisputeSplit = 25,
+    AccountingInvariantViolated = 26,
+    PotentialOverflow = 27,
 }
 
 
@@ -100,9 +101,9 @@ pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
     a.checked_add(b)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Single #[contractimpl] block — all contract-callable entrypoints live here.
-// ─────────────────────────────────────────────────────────────────────────────
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
+}
 
 #[contractimpl]
 impl Escrow {
