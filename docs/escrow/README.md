@@ -140,16 +140,17 @@ lifecycle calls fail with `ContractPaused`; read-only queries remain available.
 
 Implemented events:
 
-- `("init", "admin_set")` on `initialize`
+- `("init", "admin_set")` on `initialize` (payload: `admin`, `timestamp`)
+- `("init", "config")` on `initialize` (payload: `admin`, `timestamp`, `protocol_fee_bps`, `governed_parameters`)
 - `("paused", timestamp)` on `pause`
 - `("unpaused", timestamp)` on `unpause`
 - `("emergency", "activated")` and `("emergency", "resolved")`
 - `("audit", contract_id)` for lifecycle state transitions
-- `("created", contract_id)` on contract creation
-- `("released", contract_id, milestone_index)` on release
+- `("created", contract_id)` on contract creation (payload: `client`, `freelancer`, `timestamp`)
+- `("released", contract_id, milestone_index)` on release (payload: `caller`, `timestamp`)
 - `("rep_issd", contract_id)` on reputation issuance
-- `("cancelled", contract_id)` on cancellation
-- `("finalized", contract_id)` on finalization
+- `("cancelled", contract_id)` on cancellation (payload: `caller`, `previous_status`, `timestamp`)
+- `("finalized", contract_id)` on finalization (payload: `finalizer`, `timestamp`)
 
 There is no dedicated deposit event in the current implementation unless the
 deposit changes contract status and therefore emits an audit event. Structured
@@ -171,6 +172,11 @@ deposit and fee events are planned in
 - Storage uses persistent keys. TTL constants exist for planned pending approval
   and migration flows, but no current public entrypoint writes those pending
   records.
+- The `cancelled` event is emitted only after a successful state transition to
+  `Cancelled`, ensuring indexers receive on-chain signals for cancellations.
+- The `("init", "config")` event is emitted after the `initialized` readiness
+  checklist flag is set, carrying the initial `protocol_fee_bps` and
+  `governed_parameters` for bootstrap observability.
 
 ## Planned Features
 

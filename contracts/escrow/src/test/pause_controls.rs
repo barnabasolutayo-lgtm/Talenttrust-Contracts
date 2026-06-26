@@ -1,5 +1,5 @@
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {
     let env = Env::default();
@@ -178,4 +178,126 @@ fn unpause_restores_create_contract() {
         &ReleaseAuthorization::ClientOnly,
     );
     assert_eq!(id, 1);
+}
+
+// ─── cancelled event emission ──────────────────────────────────────────────────
+
+/// cancelled event is emitted on successful cancellation with correct payload.
+/// Validates event topic and payload structure for indexer observability.
+#[test]
+fn cancel_contract_emits_cancelled_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = EscrowClient::new(&env, &env.register(Escrow, ()));
+    let admin = Address::generate(&env);
+    assert!(client.initialize(&admin));
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 100_i128, 200_i128, 300_i128];
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    // Capture timestamp before cancellation
+    let expected_timestamp = env.ledger().timestamp();
+
+    // Cancel the contract
+    assert!(client.cancel_contract(&contract_id, &client_addr));
+
+    // Verify the cancelled event was emitted
+    let events = env.events().all();
+    let cancelled_event = events
+        .iter()
+        .find(|(topic, _)| topic == &(symbol_short!("cancelled"), contract_id));
+
+    assert!(cancelled_event.is_some(), "cancelled event must be emitted");
+
+    // Verify payload: (caller, previous_status, timestamp)
+    let (_, payload) = cancelled_event.unwrap();
+    assert_eq!(payload.get(0).unwrap(), client_addr); // caller
+    assert_eq!(payload.get(1).unwrap(), ContractStatus::Created); // previous_status
+    assert_eq!(payload.get(2).unwrap(), expected_timestamp); // timestamp
+}
+
+/// cancelled event contains correct previous_status for Funded state.
+/// Validates that the prior state is captured before transition.
+#[test]
+fn cancel_contract_emits_event_with_previous_status_funded() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = EscrowClient::new(&env, &env.register(Escrow, ()));
+    let admin = Address::generate(&env);
+    assert!(client.initialize(&admin));
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 100_i128, 200_i128, 300_i128];
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    // Fund the contract (transitions to Funded state)
+    client.deposit_funds(&contract_id, &client_addr, &600_i128);
+
+    // Cancel as freelancer
+    let expected_timestamp = env.ledger().timestamp();
+    assert!(client.cancel_contract(&contract_id, &freelancer_addr));
+
+    // Verify the cancelled event was emitted with Funded as previous_status
+    let events = env.events().all();
+    let cancelled_event = events
+        .iter()
+        .find(|(topic, _)| topic == &(symbol_short!("cancelled"), contract_id));
+
+    assert!(cancelled_event.is_some());
+    let (_, payload) = cancelled_event.unwrap();
+    assert_eq!(payload.get(0).unwrap(), freelancer_addr); // caller
+    assert_eq!(payload.get(1).unwrap(), ContractStatus::Funded); // previous_status
+    assert_eq!(payload.get(2).unwrap(), expected_timestamp); // timestamp
+}
+
+/// cancelled event is not emitted on failed cancellation.
+/// Validates security invariant: event only on successful state transition.
+#[test]
+fn cancel_contract_no_event_on_invalid_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = EscrowClient::new(&env, &env.register(Escrow, ()));
+    let admin = Address::generate(&env);
+    assert!(client.initialize(&admin));
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 100_i128, 200_i128, 300_i128];
+    let contract_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
+    // Cancel once - event emitted
+    assert!(client.cancel_contract(&contract_id, &client_addr));
+
+    // Attempt second cancellation - should fail, no additional event
+    let result = client.try_cancel_contract(&contract_id, &client_addr);
+    assert!(result.is_err(), "Second cancellation should fail");
+
+    // Only one cancelled event should exist
+    let events = env.events().all();
+    let cancelled_events: Vec<_> = events
+        .iter()
+        .filter(|(topic, _)| topic == &(symbol_short!("cancelled"), contract_id))
+        .collect();
+    assert_eq!(cancelled_events.len(), 1, "Only one cancelled event should be emitted");
 }
