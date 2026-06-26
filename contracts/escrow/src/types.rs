@@ -39,7 +39,6 @@ pub struct Contract {
     pub freelancer: Address,
     pub arbiter: Option<Address>,
     pub status: ContractStatus,
-    pub total_deposited: i128,
     pub funded_amount: i128,
     pub released_amount: i128,
     pub refunded_amount: i128,
@@ -79,6 +78,8 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+    // Settlement token (SAC)
+    SettlementToken,
 }
 
 /// Canonical contract error type for all entrypoint-facing errors.
@@ -150,19 +151,13 @@ pub struct Milestone {
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseAuthorization {
-    /// Only client can approve.
     ClientOnly = 0,
-    /// Either client or arbiter can approve.
     ClientAndArbiter = 1,
-    /// Only arbiter can approve.
     ArbiterOnly = 2,
-    /// Both client and freelancer must approve; only either of them may release
-    /// after both approvals are present.
     MultiSig = 3,
 }
 
 /// Tracks approval status for a milestone.
-/// Stored in temporary storage with TTL for expiry grace period.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneApprovals {
@@ -182,11 +177,8 @@ pub enum DepositMode {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadinessChecklist {
-    /// `true` after `initialize` has been called successfully.
     pub initialized: bool,
-    /// `true` after protocol governance parameters have been set.
     pub governed_params_set: bool,
-    /// `true` after an emergency control operation has been invoked.
     pub emergency_controls_enabled: bool,
 }
 
@@ -202,15 +194,22 @@ impl Default for ReadinessChecklist {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct Reputation {
+    pub completed_contracts: i128,
+    pub total_rating: i128,
+    pub last_rating: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GovernedParameters {
     pub protocol_fee_bps: u32,
     pub max_escrow_total_stroops: i128,
 }
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
-pub struct Reputation {
-    pub completed_contracts: i128,
-    pub total_rating: i128,
-    pub last_rating: i128,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAdminProposal {
+    pub proposed: Address,
+    pub proposed_at_ledger: u32,
 }

@@ -1,4 +1,7 @@
-use crate::{DataKey, EscrowError, ReadinessChecklist, GovernedParameters, Escrow, EscrowClient, EscrowArgs};
+use crate::{
+    DataKey, EscrowError, GovernedParameters, PendingAdminProposal, ReadinessChecklist,
+    ADMIN_ROTATION_MIN_DELAY_LEDGERS,
+};
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
 
 /// Maximum allowed protocol fee in basis points (99.99%).
@@ -50,7 +53,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         let old_bps: u32 = env
@@ -86,7 +89,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
         admin.require_auth();
 
         env.storage().persistent().set(
@@ -139,7 +142,7 @@ impl super::Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(crate::Error::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
 
         env.storage()
             .persistent()
