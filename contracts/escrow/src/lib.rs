@@ -113,6 +113,16 @@ fn emit_status_changed(
     );
 }
 
+/// Returns the symbol used for storing milestone vectors.
+///
+/// This centralizes the key symbol definition and uses `symbol_short!` to
+/// eliminate runtime symbol construction overhead.
+#[inline(always)]
+pub fn milestone_symbol(env: &Env) -> Symbol {
+    let _ = env;
+    symbol_short!("milestone")
+}
+
 #[contractimpl]
 impl Escrow {
     // ── Hello / CI ───────────────────────────────────────────────────────────
@@ -1264,8 +1274,12 @@ impl Escrow {
     /// # TTL
     /// Extends the milestones vector's persistent TTL on read,
     /// consistent with `get_milestones`.
-    pub fn get_work_evidence(env: Env, contract_id: u32, milestone_index: u32) -> Option<String> {
-        let milestone_key = Symbol::new(&env, "milestones");
+    pub fn get_work_evidence(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+    ) -> Option<String> {
+        let milestone_key = crate::milestone_symbol(&env);
         let milestones: Vec<Milestone> = env
             .storage()
             .persistent()
