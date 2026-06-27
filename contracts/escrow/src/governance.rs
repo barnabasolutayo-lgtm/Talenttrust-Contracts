@@ -1,11 +1,8 @@
 use crate::{
-    types::{GovernedParameters, PendingAdminProposal},
-    DataKey,
-    Escrow,
-    EscrowError,
-    ReadinessChecklist,
-    ADMIN_ROTATION_MIN_DELAY_LEDGERS,
+    DataKey, Error, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters,
+    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
 };
+use soroban_sdk::{contractimpl, contracttype, symbol_short, Address, Env, Symbol};
 
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
@@ -137,61 +134,5 @@ impl Escrow {
         env: &Env,
     ) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
-    }
-
-    pub(crate) fn set_governed_params_impl(
-        env: Env,
-        admin: Address,
-        protocol_fee_bps: u32,
-        max_escrow_total_stroops: i128,
-    ) -> bool {
-        Self::require_initialized(&env);
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-
-        if admin != stored_admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
-        }
-
-        admin.require_auth();
-
-        if protocol_fee_bps > 10_000 {
-            env.panic_with_error(EscrowError::InvalidProtocolParameters);
-        }
-
-        let params = GovernedParameters {
-            protocol_fee_bps,
-            max_escrow_total_stroops,
-        };
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::GovernedParameters, &params);
-
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-
-        checklist.governed_params_set = true;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-
-        true
-    }
-
-    pub(crate) fn get_governed_parameters_impl(
-        env: Env,
-    ) -> Option<GovernedParameters> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::GovernedParameters)
     }
 }

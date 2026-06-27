@@ -6,7 +6,7 @@
 //! elapsed, so `read_if_live` returns `None` for both "never set" and
 //! "expired".
 
-use crate::{DataKey, EscrowError, Milestone};
+use crate::{DataKey, Error, EscrowError, Milestone};
 use soroban_sdk::{Env, IntoVal, Symbol, TryFromVal, Val, Vec};
 
 pub const LEDGERS_PER_DAY: u32 = 17_280;
