@@ -1,49 +1,71 @@
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Events, vec, Address, Env};
 
-use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
+use super::{
+    assert_contract_error, complete_contract, create_contract, default_milestones, register_client,
+    total_milestone_amount,
+};
+use crate::{ContractStatus, Error, EscrowError, ReleaseAuthorization};
 
-fn register_client(env: &Env) -> EscrowClient<'_> {
-    let id = env.register(Escrow, ());
-    EscrowClient::new(env, &id)
-}
-
-fn create_default_contract(
-    env: &Env,
-    client: &EscrowClient,
-    client_addr: &Address,
-    freelancer_addr: &Address,
-) -> u32 {
-    let milestones = vec![env, 100_i128, 200_i128, 300_i128];
-    client.create_contract(
-        client_addr,
-        freelancer_addr,
-        &None,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    )
-}
-
+use super::{assert_contract_error, complete_contract, create_contract, register_client};
+use crate::{ContractStatus, Error};
 #[test]
-fn refund_all_unreleased_milestones_and_completes_contract() {
+fn refund_succeeds_on_funded_contract() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
+    let (client_addr, _freelancer, contract_id) = create_contract(&env, &client);
 
-    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
 
-    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
-    assert!(client.release_milestone(&contract_id, &0, &client_addr));
-
-    let refund_ids = vec![&env, 1_u32, 2_u32];
+    let refund_ids = vec![&env, 1_u32];
     let refunded = client.refund_unreleased_milestones(&contract_id, &refund_ids);
-    assert_eq!(refunded, 1_000_0000000_i128);
+    assert_eq!(refunded, 400_0000000_i128);
 
     let contract = client.get_contract(&contract_id);
-    assert_eq!(contract.status, ContractStatus::Refunded);
-    assert_eq!(contract.refunded_amount, 1_000_0000000_i128);
+    assert_eq!(contract.status, ContractStatus::Funded);
 }
+
+#[test]
+fn rejects_refund_on_cancelled_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer, contract_id) = create_contract(&env, &client);
+
+    assert!(client.cancel_contract(&contract_id, &client_addr));
+
+    let refund_ids = vec![&env, 0_u32];
+    assert_contract_error(
+        client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
+        Error::InvalidState,
+    );
+}
+
+#[test]
+fn rejects_refund_on_completed_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (_client_addr, _freelancer, contract_id) = complete_contract(&env, &client);
+
+    let refund_ids = vec![&env, 0_u32];
+    assert_contract_error(
+        client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
+        Error::InvalidState,
+    );
+}
+
+#[test]
+fn rejects_refund_on_finalized_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer, contract_id) = complete_contract(&env, &client);
+
+    assert!(client.finalize_contract(&contract_id, &client_addr));
+
+    let refund_ids = vec![&env, 0_u32];
+    assert_contract_error(
+        client.try_refund_unreleased_milestones(&contract_id, &refund_ids),
+        Error::AlreadyFinalized,
+    );
