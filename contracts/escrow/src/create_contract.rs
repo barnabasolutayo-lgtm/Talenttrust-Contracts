@@ -78,6 +78,7 @@ pub fn create_contract_impl(
         released_amount: 0,
         refunded_amount: 0,
         release_authorization,
+        reputation_issued: false,
     };
     env.storage()
         .persistent()
@@ -119,16 +120,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        id
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(Error::ContractIdCollision);
     }
 
     id

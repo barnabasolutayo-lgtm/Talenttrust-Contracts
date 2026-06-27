@@ -106,10 +106,6 @@ pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
     a.checked_add(b)
 }
 
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
-
 #[contractimpl]
 impl Escrow {
     // ── Hello / CI ───────────────────────────────────────────────────────────
@@ -435,8 +431,15 @@ impl Escrow {
 
         let _release_amount = milestone.amount;
         milestone.released = true;
+        // Record the funded amount on the milestone so it is self-describing.
+        // The deposit path should have already distributed funds to cover this
+        // milestone, but we set it here as a safety measure.
+        milestone.funded_amount = milestone.amount;
         milestones.set(milestone_index, milestone.clone());
-        contract.released_amount += milestone.amount;
+        contract.released_amount = contract
+            .released_amount
+            .checked_add(milestone.amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientFunds));
 
         // Accumulate protocol fees if initialized with a fee rate
         if Self::is_initialized(&env) {
@@ -578,14 +581,18 @@ impl Escrow {
             env.panic_with_error(Error::InsufficientFunds);
         }
 
-        // Mark milestones as refunded
+        // Mark milestones as refunded with the refunded_amount populated
         for idx in milestone_indices.iter() {
             let mut milestone = milestones.get(idx).unwrap();
             milestone.refunded = true;
+            milestone.refunded_amount = milestone.amount;
             milestones.set(idx, milestone);
         }
 
-        contract.refunded_amount += total_refund_amount;
+        contract.refunded_amount = contract
+            .refunded_amount
+            .checked_add(total_refund_amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientFunds));
 
         // Check if all unreleased milestones are refunded
         let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
@@ -800,23 +807,7 @@ impl Escrow {
         true
     }
 
-    pub fn resolve_emergency(env: Env) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-        env.storage().persistent().set(&DataKey::Emergency, &false);
-        env.storage().persistent().set(&DataKey::Paused, &false);
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.emergency_controls_enabled = true;
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-        true
-    }
+
 
     pub fn is_emergency(env: Env) -> bool {
         env.storage()
@@ -1212,20 +1203,7 @@ impl Escrow {
             .unwrap_or(false)
     }
 
-    fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
 
-    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
-    }
 
     // -----------------------------------------------------------------------
     // Dispute management
@@ -1392,3 +1370,6 @@ impl Escrow {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_per_milestone_funding;

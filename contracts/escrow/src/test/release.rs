@@ -324,3 +324,85 @@ fn work_evidence_rejects_unknown_contract() {
     let result = escrow.try_submit_work_evidence(&9999, &freelancer, &0, &ev);
     assert_contract_error(result, Error::ContractNotFound);
 }
+
+// ---------------------------------------------------------------------------
+// Per-milestone accounting on release
+// ---------------------------------------------------------------------------
+
+#[test]
+fn release_sets_milestone_funded_amount_to_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    // Release milestone 0: funded_amount should equal amount
+    client.approve_milestone_release(&contract_id, &client_addr, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().funded_amount, MILESTONE_ONE);
+    assert_eq!(ms.get(0).unwrap().released, true);
+
+    // Release milestone 1
+    client.approve_milestone_release(&contract_id, &client_addr, &1);
+    client.release_milestone(&contract_id, &client_addr, &1);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(1).unwrap().funded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().released, true);
+}
+
+#[test]
+fn refund_sets_milestone_refunded_amount_on_unreleased() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    // Refund milestone 1 only
+    client.refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]);
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(0).unwrap().refunded, false);
+    assert_eq!(ms.get(1).unwrap().refunded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().refunded, true);
+    assert_eq!(ms.get(2).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(2).unwrap().refunded, false);
+}
+
+#[test]
+fn mixed_release_refund_maintains_per_milestone_invariant() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
+
+    client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());
+
+    // Release milestone 0
+    client.approve_milestone_release(&contract_id, &client_addr, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
+
+    // Refund milestone 2 (unreleased)
+    client.refund_unreleased_milestones(&contract_id, &vec![&env, 2_u32]);
+
+    let ms = client.get_milestones(&contract_id);
+    assert_eq!(ms.get(0).unwrap().funded_amount, MILESTONE_ONE);
+    assert_eq!(ms.get(0).unwrap().released, true);
+    assert_eq!(ms.get(1).unwrap().funded_amount, 400_0000000_i128);
+    assert_eq!(ms.get(1).unwrap().refunded_amount, 0);
+    assert_eq!(ms.get(1).unwrap().released, false);
+    assert_eq!(ms.get(2).unwrap().refunded_amount, 600_0000000_i128);
+    assert_eq!(ms.get(2).unwrap().refunded, true);
+
+    // Invariant: per-milestone sums match contract totals
+    let contract = client.get_contract(&contract_id);
+    let ms = client.get_milestones(&contract_id);
+    let funded_sum: i128 = ms.iter().map(|m| m.funded_amount).sum();
+    let refunded_sum: i128 = ms.iter().map(|m| m.refunded_amount).sum();
+    assert_eq!(funded_sum, contract.funded_amount);
+    assert_eq!(refunded_sum, contract.refunded_amount);
+}
