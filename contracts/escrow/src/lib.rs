@@ -281,6 +281,7 @@ impl Escrow {
 
     /// Propose a client migration for an existing contract.
     ///
+    /// Canonical public entrypoint; delegates to [`migration::propose_client_migration_impl`].
     /// The current client must authorize the call. The proposed client address
     /// must not be the freelancer or the current client. The pending migration
     /// is stored in temporary storage with TTL.
@@ -295,17 +296,25 @@ impl Escrow {
     }
 
     /// Accept a live pending client migration and update the contract.
+    ///
+    /// Canonical public entrypoint; delegates to [`migration::accept_client_migration_impl`].
+    /// Only the proposed client address may authorize acceptance.
     pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
         Self::require_not_paused(&env);
         migration::accept_client_migration_impl(&env, contract_id, new_client)
     }
 
     /// Return true if a live pending client migration exists.
+    ///
+    /// Canonical public entrypoint; delegates to [`migration::has_pending_client_migration_impl`].
     pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
         migration::has_pending_client_migration_impl(&env, contract_id)
     }
 
     /// Return the live pending client migration record.
+    ///
+    /// Canonical public entrypoint; delegates to [`migration::get_pending_client_migration_impl`].
+    /// Panics with `InvalidState` when no live pending migration exists.
     pub fn get_pending_client_migration(env: Env, contract_id: u32) -> PendingClientMigration {
         migration::get_pending_client_migration_impl(&env, contract_id)
     }
@@ -1374,38 +1383,6 @@ impl Escrow {
         }
 
         milestones.get(milestone_index).unwrap().work_evidence
-    }
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    /// Proposes a client migration for an existing contract.
-    pub fn propose_client_migration(
-        env: Env,
-        contract_id: u32,
-        current_client: Address,
-        new_client: Address,
-    ) -> bool {
-        Self::propose_client_migration_impl(env, contract_id, current_client, new_client)
-    }
-
-    /// Accepts a pending client migration.
-    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
-        Self::accept_client_migration_impl(env, contract_id, new_client)
-    }
-
-    /// Returns true if a live pending client migration exists.
-    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
-        Self::has_pending_client_migration_impl(env, contract_id)
-    }
-
-    /// Returns the live pending client migration record.
-    pub fn get_pending_client_migration(
-        env: Env,
-        contract_id: u32,
-    ) -> migration::PendingClientMigration {
-        Self::get_pending_client_migration_impl(env, contract_id)
     }
 
     // ── Finalization ─────────────────────────────────────────────────────────
