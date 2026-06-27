@@ -19,14 +19,18 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn setup_initialized() -> (Env, EscrowClient<'_>, Address) {
+fn setup_initialized() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    assert!(client.initialize(&admin));
-    (env, client, admin)
+    (env, admin)
+}
+
+fn make_client<'a>(env: &'a Env, admin: &Address) -> EscrowClient<'a> {
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(env, &contract_id);
+    assert!(client.initialize(admin));
+    client
 }
 
 /// Create a contract in `Created` state with `ClientOnly` release authorization
@@ -109,7 +113,8 @@ fn initialize_only_once_fails() {
 
 #[test]
 fn pause_then_unpause_toggles_state() {
-    let (_env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     assert!(!client.is_paused());
     assert!(client.pause());
     assert!(client.is_paused());
@@ -130,7 +135,8 @@ fn pause_requires_initialization() {
 
 #[test]
 fn pause_blocks_create_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     client.pause();
 
     let a = Address::generate(&env);
@@ -149,60 +155,21 @@ fn pause_blocks_create_contract() {
 
 #[test]
 fn emergency_blocks_create_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     set_emergency_only(&env, &client);
 
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     super::assert_contract_error(
-        client.try_deposit_funds(&id, &client_addr, &50_i128),
-        EscrowError::ContractPaused,
-    );
-}
-
-// ─── release_milestone blocked ───────────────────────────────────────────────
-
-#[test]
-fn pause_blocks_release_milestone() {
-    let (env, contract_id, _admin) = setup_initialized();
-    let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
-    client.pause();
-
-    super::assert_contract_error(
-        client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::ContractPaused,
-    );
-}
-
-// ─── issue_reputation blocked ────────────────────────────────────────────────
-
-#[test]
-#[ignore]
-fn pause_blocks_issue_reputation() {
-    let (env, contract_id, _admin) = setup_initialized();
-    let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, freelancer_addr, id) = setup_completed_contract(&env, &client);
-    client.pause();
-
-    super::assert_contract_error(
-        client.try_issue_reputation(&id, &client_addr, &freelancer_addr, &5_i128),
-        EscrowError::ContractPaused,
-    );
-}
-
-// ─── cancel_contract blocked ─────────────────────────────────────────────────
-
-#[test]
-fn pause_blocks_cancel_contract() {
-    let (env, contract_id, _admin) = setup_initialized();
-    let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
-    client.pause();
-
-    super::assert_contract_error(
-        client.try_cancel_contract(&id, &client_addr),
-        EscrowError::ContractPaused,
+        client.try_create_contract(
+            &a,
+            &b,
+            &None,
+            &vec![&env, 50_i128],
+            &ReleaseAuthorization::ClientOnly,
+        ),
+        EscrowError::EmergencyActive,
     );
 }
 
@@ -210,7 +177,8 @@ fn pause_blocks_cancel_contract() {
 
 #[test]
 fn unpause_restores_create_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     client.pause();
     client.unpause();
 
@@ -228,7 +196,8 @@ fn unpause_restores_create_contract() {
 
 #[test]
 fn resolve_emergency_restores_create_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
 
@@ -248,7 +217,8 @@ fn resolve_emergency_restores_create_contract() {
 
 #[test]
 fn pause_blocks_deposit_funds() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 
@@ -260,7 +230,8 @@ fn pause_blocks_deposit_funds() {
 
 #[test]
 fn emergency_blocks_deposit_funds() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
 
@@ -272,7 +243,8 @@ fn emergency_blocks_deposit_funds() {
 
 #[test]
 fn unpause_restores_deposit_funds() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_created_contract(&env, &client);
     client.pause();
     client.unpause();
@@ -281,7 +253,8 @@ fn unpause_restores_deposit_funds() {
 
 #[test]
 fn resolve_emergency_restores_deposit_funds() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_created_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
@@ -292,7 +265,8 @@ fn resolve_emergency_restores_deposit_funds() {
 
 #[test]
 fn pause_blocks_release_milestone() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 
@@ -304,7 +278,8 @@ fn pause_blocks_release_milestone() {
 
 #[test]
 fn emergency_blocks_release_milestone() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
 
@@ -316,7 +291,8 @@ fn emergency_blocks_release_milestone() {
 
 #[test]
 fn unpause_restores_release_milestone() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
     client.unpause();
@@ -326,7 +302,8 @@ fn unpause_restores_release_milestone() {
 
 #[test]
 fn resolve_emergency_restores_release_milestone() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
@@ -338,31 +315,34 @@ fn resolve_emergency_restores_release_milestone() {
 
 #[test]
 fn pause_blocks_refund_unreleased_milestones() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 
-    super::assert_contract_error(
-        client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]),
-        EscrowError::ContractPaused,
-    );
+    match client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractPaused)),
+        other => panic!("expected ContractPaused error, got {:?}", other),
+    }
 }
 
 #[test]
 fn emergency_blocks_refund_unreleased_milestones() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
 
-    super::assert_contract_error(
-        client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]),
-        EscrowError::EmergencyActive,
-    );
+    match client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 1_u32]) {
+        Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::EmergencyActive)),
+        other => panic!("expected EmergencyActive error, got {:?}", other),
+    }
 }
 
 #[test]
 fn unpause_restores_refund_unreleased_milestones() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
     client.unpause();
@@ -372,7 +352,8 @@ fn unpause_restores_refund_unreleased_milestones() {
 
 #[test]
 fn resolve_emergency_restores_refund_unreleased_milestones() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
@@ -384,51 +365,76 @@ fn resolve_emergency_restores_refund_unreleased_milestones() {
 
 #[test]
 fn pause_blocks_issue_reputation() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     client.pause();
 
     super::assert_contract_error(
-        client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128),
+        client.try_issue_reputation(
+            &contract_id,
+            &client_addr,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         EscrowError::ContractPaused,
     );
 }
 
 #[test]
 fn emergency_blocks_issue_reputation() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     set_emergency_only(&env, &client);
 
     super::assert_contract_error(
-        client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128),
+        client.try_issue_reputation(
+            &contract_id,
+            &client_addr,
+            &5_u32,
+            &soroban_sdk::String::from_str(&env, "Great"),
+        ),
         EscrowError::EmergencyActive,
     );
 }
 
 #[test]
 fn unpause_restores_issue_reputation() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     client.pause();
     client.unpause();
-    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128));
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
 }
 
 #[test]
 fn resolve_emergency_restores_issue_reputation() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, freelancer_addr, contract_id) = setup_completed_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
-    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128));
+    assert!(client.issue_reputation(
+        &contract_id,
+        &client_addr,
+        &5_u32,
+        &soroban_sdk::String::from_str(&env, "Great")
+    ));
 }
 
 // ─── cancel_contract blocked ─────────────────────────────────────────────────
 
 #[test]
 fn pause_blocks_cancel_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 
@@ -440,7 +446,8 @@ fn pause_blocks_cancel_contract() {
 
 #[test]
 fn emergency_blocks_cancel_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
 
@@ -452,7 +459,8 @@ fn emergency_blocks_cancel_contract() {
 
 #[test]
 fn unpause_restores_cancel_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
     client.unpause();
@@ -461,7 +469,8 @@ fn unpause_restores_cancel_contract() {
 
 #[test]
 fn resolve_emergency_restores_cancel_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
     assert!(client.resolve_emergency());
@@ -472,7 +481,8 @@ fn resolve_emergency_restores_cancel_contract() {
 
 #[test]
 fn read_only_queries_unaffected_by_pause() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 
@@ -486,7 +496,8 @@ fn read_only_queries_unaffected_by_pause() {
 
 #[test]
 fn read_only_queries_unaffected_by_emergency() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     set_emergency_only(&env, &client);
 
@@ -502,7 +513,8 @@ fn read_only_queries_unaffected_by_emergency() {
 
 #[test]
 fn pause_gate_runs_before_auth_on_create_contract() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     client.pause();
 
     let outsider = Address::generate(&env);
@@ -523,7 +535,8 @@ fn pause_gate_runs_before_auth_on_create_contract() {
 
 #[test]
 fn pause_gate_runs_before_auth_on_deposit_funds() {
-    let (env, client, _admin) = setup_initialized();
+    let (env, admin) = setup_initialized();
+    let client = make_client(&env, &admin);
     let (_client_addr, _freelancer_addr, contract_id) = setup_funded_contract(&env, &client);
     client.pause();
 

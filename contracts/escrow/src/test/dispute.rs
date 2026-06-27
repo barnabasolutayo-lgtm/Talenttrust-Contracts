@@ -5,14 +5,25 @@ use crate::{
 };
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-fn setup_initialized() -> (Env, Address, EscrowClient<'static>) {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    assert!(client.initialize(&admin));
-    (env, contract_id, client)
+fn setup_initialized() -> (Env, EscrowClient<'static>) {
+    panic!(
+        "setup_initialized returns a static lifetime which is unsound; use make_env_client instead"
+    )
+}
+
+/// Create a fresh initialized escrow environment.
+fn make_env_client() -> (Env, EscrowClient<'static>) {
+    panic!(
+        "Cannot return EscrowClient<'static>; restructure callers to not store client across env"
+    )
+}
+
+fn new_client(env: &Env) -> EscrowClient<'_> {
+    let cid = env.register(Escrow, ());
+    let client = EscrowClient::new(env, &cid);
+    let admin = Address::generate(env);
+    client.initialize(&admin);
+    client
 }
 
 fn create_funded_contract_with_arbiter(
@@ -36,6 +47,23 @@ fn create_funded_contract_with_arbiter(
     assert!(client.deposit_funds(&contract_id, &client_addr, &deposit_amount));
 
     (client_addr, freelancer_addr, arbiter_addr, contract_id)
+}
+
+/// Build a Contract value for unit-testing `resolution_payouts` / `final_status_after_resolution`
+/// without going through the full escrow entrypoints.
+fn payout_contract(env: &Env, funded: i128, released: i128, refunded: i128) -> crate::Contract {
+    let dummy = Address::generate(env);
+    crate::Contract {
+        client: dummy.clone(),
+        freelancer: dummy.clone(),
+        arbiter: None,
+        status: ContractStatus::Disputed,
+        funded_amount: funded,
+        released_amount: released,
+        refunded_amount: refunded,
+        release_authorization: ReleaseAuthorization::ClientOnly,
+        reputation_issued: false,
+    }
 }
 
 /// Verifies FullRefund conserves all available balance for the client.
@@ -99,11 +127,11 @@ fn resolution_payouts_split_rejects_negative_legs() {
 
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::Split(-1, 101)),
-        Err(EscrowError::InvalidDisputeSplit)
+        Err(Error::InvalidDisputeSplit)
     );
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::Split(101, -1)),
-        Err(EscrowError::InvalidDisputeSplit)
+        Err(Error::InvalidDisputeSplit)
     );
 }
 
@@ -115,11 +143,11 @@ fn resolution_payouts_split_rejects_non_conserving_sums() {
 
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::Split(40, 59)),
-        Err(EscrowError::InvalidDisputeSplit)
+        Err(Error::InvalidDisputeSplit)
     );
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::Split(40, 61)),
-        Err(EscrowError::InvalidDisputeSplit)
+        Err(Error::InvalidDisputeSplit)
     );
 }
 
@@ -148,7 +176,7 @@ fn resolution_payouts_split_rejects_overflowing_sum() {
 
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::Split(i128::MAX, 1)),
-        Err(EscrowError::PotentialOverflow)
+        Err(Error::PotentialOverflow)
     );
 }
 
@@ -160,7 +188,7 @@ fn resolution_payouts_rejects_accounting_invariant_violation() {
 
     assert_eq!(
         resolution_payouts(&contract, &DisputeResolution::FullRefund),
-        Err(EscrowError::AccountingInvariantViolated)
+        Err(Error::AccountingInvariantViolated)
     );
 }
 
@@ -183,7 +211,9 @@ fn final_status_after_resolution_marks_refunded_only_for_full_refund() {
 
 #[test]
 fn client_can_raise_dispute_on_funded_contract() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, _, escrow_id) = create_funded_contract_with_arbiter(
         &env,
         &client,
@@ -199,7 +229,9 @@ fn client_can_raise_dispute_on_funded_contract() {
 
 #[test]
 fn freelancer_can_raise_dispute_on_funded_contract() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (_, freelancer_addr, _, escrow_id) = create_funded_contract_with_arbiter(
         &env,
         &client,
@@ -228,7 +260,9 @@ fn raise_dispute_requires_contract_party() {
 
 #[test]
 fn raise_dispute_requires_assigned_arbiter() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
 
@@ -280,7 +314,7 @@ fn resolve_full_refund_marks_refunded_and_closes_accounting() {
     assert_eq!(contract.refunded_amount, 200);
     assert_eq!(
         contract.released_amount + contract.refunded_amount,
-        contract.total_deposited
+        contract.funded_amount
     );
 }
 
@@ -299,7 +333,7 @@ fn resolve_full_payout_marks_completed_and_closes_accounting() {
     assert_eq!(contract.refunded_amount, 0);
     assert_eq!(
         contract.released_amount + contract.refunded_amount,
-        contract.total_deposited
+        contract.funded_amount
     );
 }
 
@@ -319,13 +353,15 @@ fn resolve_partial_refund_applies_70_30_split() {
     assert_eq!(contract.released_amount, 30);
     assert_eq!(
         contract.released_amount + contract.refunded_amount,
-        contract.total_deposited
+        contract.funded_amount
     );
 }
 
 #[test]
 fn resolve_partial_refund_applies_to_remaining_balance() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) = create_funded_contract_with_arbiter(
         &env,
         &client,
@@ -348,7 +384,7 @@ fn resolve_partial_refund_applies_to_remaining_balance() {
     assert_eq!(contract.refunded_amount, 70);
     assert_eq!(
         contract.released_amount + contract.refunded_amount,
-        contract.total_deposited
+        contract.funded_amount
     );
 }
 
@@ -499,7 +535,9 @@ fn emergency_blocks_raise_and_resolve_dispute() {
 
 #[test]
 fn dispute_accounting_invariants_hold() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) = create_funded_contract_with_arbiter(
         &env,
         &client,
@@ -524,10 +562,10 @@ fn dispute_accounting_invariants_hold() {
     let after_dispute = client.get_contract(&escrow_id);
     assert_eq!(after_dispute.released_amount, 80); // 50 + 30
     assert_eq!(after_dispute.refunded_amount, 20);
-    assert_eq!(after_dispute.total_deposited, 100);
+    assert_eq!(after_dispute.funded_amount, 100);
     assert_eq!(
         after_dispute.released_amount + after_dispute.refunded_amount,
-        after_dispute.total_deposited
+        after_dispute.funded_amount
     );
 }
 
